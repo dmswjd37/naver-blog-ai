@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77,<82"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "naver-blog-ai"
+version = "0.1.0"
+description = "AI-assisted Naver restaurant blog post generator"
+requires-python = ">=3.11,<3.14"
+# 런타임 의존성 목록
+dependencies = [
+    "playwright>=1.51",
+    "pyperclip>=1.9",
+]
+
+# 선택적 의존성 (개발, 테스트 등)
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4,<10",
+    "ruff>=0.12,<1",
+]
+
+# Windows EXE 생성
+build = [
+    "pyinstaller>=6.22,<7",
+]
+
+[project.scripts]
+naver-blog-ai = "naver_blog_ai.cli:main"
+
+# GUI 실행 명령
+[project.gui-scripts]
+naver-blog-ai-gui = "naver_blog_ai.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

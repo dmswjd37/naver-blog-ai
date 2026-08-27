@@ -1,0 +1,551 @@
+{
+  "version": "1.1",
+  "profile_name": "friendly_centered_food_review",
+  "source_document_count": 5,
+  "purpose": "Generate an original Korean restaurant review using only the user's photos and facts while following the extracted high-level title, writing, paragraph and layout patterns.",
+
+  "safety": {
+    "copy_source_phrases": false,
+    "copy_source_titles": false,
+    "reuse_source_restaurant_facts": false,
+    "reuse_source_images": false,
+    "infer_sponsorship": false,
+    "invent_unverified_facts": false
+  },
+
+  "title": {
+    "reference_style_required": true,
+
+    "style_description": "지역과 핵심 검색어를 앞부분에 배치하고 업체명, 대표 메뉴, 가격, 주차, 웨이팅, 분위기 또는 실제 방문 포인트를 뒤에 연결하는 긴 네이버 검색형 제목",
+
+    "priority": "Follow the keyword-rich title rhythm extracted from the reference blog titles instead of converting the title into a short sentence.",
+
+    "patterns": [
+      "지역 + 세부 지역 또는 상권 + 맛집 키워드 + 업종 또는 특징 + 추천 + 업체명 + 예약·주차·웨이팅 정보 + 후기",
+      "지역 + 맛집 키워드 + 대표 메뉴 + 업종 특징 + 업체명 + 주차 또는 웨이팅",
+      "지역 + 음식 또는 장소 키워드 + 업체명 + 분위기 + 대표 메뉴 + 먹방",
+      "지역 + 음식 키워드 + 업체명 + 대표 메뉴 + 구체적인 가격 + 방문 상황 + 후기",
+      "지역 + 테마형 검색 키워드 + 장소 종류 + 추천 + 업체명",
+      "지역 + 맛집 키워드 + 업체명 + 주문 메뉴 + 사용자가 입력한 핵심 장점 + 후기"
+    ],
+
+    "reference_title_features": [
+      "지역명과 세부 상권명을 제목 앞부분에 함께 사용",
+      "맛집, 카페, 술집, 고깃집처럼 검색할 업종을 명확하게 표시",
+      "업체명은 제목의 중간 또는 후반에 자연스럽게 배치",
+      "메뉴명은 실제로 주문한 대표 메뉴를 중심으로 사용",
+      "가격, 주차, 예약과 웨이팅은 검증된 경우에만 사용",
+      "고즈넉한 분위기, 단돈 가격, 웨이팅 없이처럼 구체적인 한 가지 포인트를 포함",
+      "조사를 최소화하고 명사형 검색어를 자연스럽게 이어 붙임",
+      "제목 끝에는 내용에 따라 후기, 먹방, 주차 및 웨이팅 또는 업체명을 사용"
+    ],
+
+    "preferred_order": [
+      "region",
+      "sub_region_or_commercial_area",
+      "primary_search_keyword",
+      "restaurant_category_or_feature",
+      "restaurant_name",
+      "ordered_menu",
+      "specific_user_point",
+      "optional_closing_keyword"
+    ],
+
+    "required_elements": [
+      "region",
+      "restaurant_name",
+      "primary_search_keyword"
+    ],
+
+    "optional_elements": [
+      "sub_region",
+      "commercial_area",
+      "restaurant_category",
+      "ordered_menu",
+      "verified_price",
+      "verified_parking",
+      "verified_reservation",
+      "verified_waiting",
+      "verified_atmosphere",
+      "user_key_point",
+      "후기",
+      "먹방",
+      "추천"
+    ],
+
+    "keyword_count": {
+      "min": 4,
+      "max": 8
+    },
+
+    "length": {
+      "target_min_characters": 30,
+      "target_max_characters": 55
+    },
+
+    "punctuation": "minimal",
+    "comma_usage": "가격 표기처럼 꼭 필요한 경우에만 사용",
+    "emoji": false,
+    "numbering": false,
+    "candidate_count": 1,
+
+    "noun_phrase_policy": "Noun-based search keywords may be connected consecutively when the result remains readable and resembles the reference title rhythm.",
+
+    "composition_rules": [
+      "제목 앞부분에는 지역과 핵심 검색 키워드를 배치합니다",
+      "업체명 뒤에는 메뉴, 가격, 분위기 또는 방문 포인트 중 한두 가지를 연결합니다",
+      "단순히 가게명과 메뉴명에서 끝내지 않습니다",
+      "사용자가 직접 입력한 핵심 장점을 한 가지 이상 반영합니다",
+      "후기와 먹방은 예시 제목의 흐름에 어울릴 때 사용할 수 있습니다",
+      "주차, 예약과 웨이팅은 웹 검색으로 검증된 경우에만 사용합니다",
+      "여러 메뉴를 넣을 때 조사를 반복하지 않고 검색형 제목처럼 간결하게 연결합니다",
+      "예시 제목의 문장을 그대로 복사하지 않습니다",
+      "제목은 정확히 한 개만 생성합니다",
+      "가족 외식, 데이트, 혼밥, 회식, 모임과 아이 동반은 사용자가 직접 입력한 경우에만 제목에 사용합니다",
+      "매장 사진이나 웹 검색 결과만 보고 방문 목적과 동행인을 추측하지 않습니다",
+      "사용자가 입력하지 않은 방문 상황을 제목 분량을 채우기 위해 추가하지 않습니다",
+      "제목 끝에 넣을 검증된 방문 상황이 없다면 후기 또는 먹방으로 자연스럽게 마무리합니다"
+    ],
+
+    "closing_keyword_rules": {
+      "후기": "실제 방문 경험과 느낀 점을 중심으로 작성한 경우",
+      "먹방": "음식 사진과 메뉴별 설명이 글의 중심인 경우",
+      "추천": "사용자가 추천 의사를 직접 표현했거나 장점이 충분히 확인된 경우",
+      "주차 및 웨이팅": "두 정보가 모두 검증된 경우",
+      "none": "제목이 업체명이나 구체적인 특징으로 자연스럽게 끝나는 경우"
+    },
+
+    "avoid_patterns": [
+      "지역, 업체명과 메뉴명만 넣고 끝나는 제목",
+      "본문에 없는 메뉴나 특징을 넣은 제목",
+      "확인되지 않은 무료주차, 예약과 웨이팅 정보",
+      "최고, 무조건, 인생 맛집 같은 과장 표현",
+      "같은 뜻의 검색 키워드를 반복한 제목",
+      "짧고 감성적인 문장형 제목",
+      "검색 키워드가 거의 없는 제목",
+      "사용자가 입력하지 않은 가족 외식, 데이트, 혼밥, 회식과 모임",
+      "매장 분위기만 보고 추측한 방문 목적",
+      "검색 키워드를 늘리기 위해 만든 방문 상황"
+    ],
+
+    "quality_check": [
+      "제목 앞부분에 지역과 핵심 검색어가 있는가",
+      "업체명 뒤에 구체적인 메뉴 또는 방문 포인트가 있는가",
+      "제목이 가게명과 메뉴 나열만으로 끝나지 않았는가",
+      "참고 제목과 비슷한 길이와 정보 밀도를 가지고 있는가",
+      "가격, 주차, 예약과 웨이팅 정보가 검증됐는가",
+      "제목이 정확히 한 개인가"
+    ]
+  },
+
+  "tone": {
+    "language": "ko-KR",
+    "register": "친근하고 밝은 존댓말",
+    "perspective": "1인칭 실제 방문 경험",
+    "advertising_intensity": "low",
+    "honesty": "장점을 중심으로 쓰되 사용자가 입력한 아쉬움이 있으면 자연스럽게 표현",
+
+    "common_endings": [
+      "~했어요",
+      "~있었어요",
+      "~좋더라구요",
+      "~괜찮았어요",
+      "~마음에 들었어요",
+      "~맛있더라구요",
+      "~였답니다",
+      "~하고 왔어요",
+      "~추천드려요",
+      "~였습니당"
+    ],
+
+    "casual_markers": ["ㅎㅎ", "ㅋㅋ", "ㅠㅠ"],
+
+    "casual_marker_count": {
+      "min": 3,
+      "max": 6
+    },
+
+    "casual_marker_usage": "상황이 자연스러울 때만 제한적으로 사용",
+
+    "avoid_endings": [
+      "~하는 것이 좋겠습니다",
+      "~로 보입니다",
+      "~할 수 있습니다",
+      "~였던 것으로 확인됩니다"
+    ]
+  },
+
+  "paragraph": {
+    "alignment": "center",
+
+    "sentences_per_paragraph": {
+      "min": 1,
+      "max": 3
+    },
+
+    "visual_lines_per_paragraph": {
+      "min": 1,
+      "max": 4
+    },
+
+    "blank_line_between_paragraphs": true,
+    "final_period": false,
+    "exclamation_usage": "important_reactions_only",
+    "tilde_usage": "light_and_occasional",
+
+    "short_reaction_paragraphs": {
+      "min": 4,
+      "max": 7
+    },
+
+    "sentence_ending_repetition": "Do not repeat the same ending in consecutive paragraphs."
+  },
+
+  "intro": {
+    "sequence": [
+      "greeting",
+      "restaurant_and_region",
+      "visit_context",
+      "selection_reason",
+      "ordered_menu",
+      "key_feature",
+      "business_information_box"
+    ],
+
+    "greeting_candidates": ["안녕하세요!", "안녕하세요"],
+
+    "target_paragraph_count": {
+      "min": 2,
+      "max": 4
+    },
+
+    "information_box_position": "Place it immediately after the opening paragraphs and before the first section heading.",
+
+    "rules": [
+      "Do not place an image before the information box.",
+      "Do not place a sticker before the information box.",
+      "Do not use a representative or hero image marker.",
+      "Include the visit reason and ordered menu naturally in the opening or in a later food section containing an image.",
+      "Do not create a separate visit-reason section when that section would contain no image."
+    ]
+  },
+
+  "information_box": {
+    "position": "immediately_after_intro",
+    "marker_start": "[정보박스]",
+    "marker_end": "[/정보박스]",
+
+    "allowed_fields": [
+      "상호명",
+      "주소",
+      "영업시간",
+      "브레이크타임",
+      "전화번호",
+      "주차"
+    ],
+
+    "rules": [
+      "Only include information verified through reliable public sources.",
+      "Omit an unverified field instead of writing 정보 없음.",
+      "Do not include emojis.",
+      "Do not repeat information from the box in the closing paragraphs."
+    ]
+  },
+
+  "article_flow": [
+    "intro",
+    "business_information_box",
+    "interior_or_exterior_section",
+    "menu_or_store_information_section",
+    "basic_side_dish_section",
+    "ordered_menu_overview_section",
+    "item_by_item_tasting_sections",
+    "eating_scene_section",
+    "post_meal_section_if_confirmed",
+    "balanced_closing",
+    "closing_sticker",
+    "map_or_place_card"
+  ],
+
+  "missing_section_policy": "omit",
+
+  "image_layout": {
+    "use_hero_image": false,
+    "exterior": "single_or_two_image_group",
+    "interior": "single_or_two_image_group",
+    "menu_and_facilities": "one_to_three_image_group",
+    "food": "overview_first_then_closeups",
+
+    "images_per_block": {
+      "min": 1,
+      "max": 3
+    },
+
+    "caption_sentences_after_image": {
+      "min": 1,
+      "max": 5
+    },
+
+    "similar_image_strategy": [
+      "quantity",
+      "appearance",
+      "visible_ingredients",
+      "texture_from_user_input",
+      "pairing",
+      "eating_method"
+    ],
+
+    "markers": {
+      "single": "[사진:실제파일명.jpg | 역할]",
+      "group": "[사진묶음:실제파일명1.jpg, 실제파일명2.jpg | 역할]"
+    },
+
+    "filename_rules": [
+      "Use the actual supplied filename without modification.",
+      "Do not create image_01 or similar aliases.",
+      "Do not add backslashes before colons or underscores.",
+      "Use every supplied image exactly once.",
+      "Do not reuse an image from a photo group as a single photo."
+    ]
+  },
+
+  "image_classification": {
+    "categories": [
+      "exterior",
+      "interior",
+      "menu_or_notice",
+      "basic_side_dishes",
+      "ordered_food_overview",
+      "food_closeup",
+      "eating_scene",
+      "post_meal",
+      "gif_or_short_video"
+    ],
+
+    "basic_side_dishes_rules": [
+      "Neatly arranged salad, pickles, soy sauce, wasabi and soup are basic side dishes.",
+      "A large empty area on a tray does not by itself mean that the meal is finished.",
+      "If the side dishes remain neatly arranged and show no clear eating traces, classify the image as basic side dishes."
+    ],
+
+    "post_meal_rules": [
+      "Classify an image as post-meal only when consumed food, used dishes, food remnants or clearly disturbed tableware are visible.",
+      "Do not classify an image as post-meal merely because the main dish is absent.",
+      "When uncertain between basic side dishes and post-meal, use basic side dishes and avoid claiming that the meal was finished."
+    ],
+
+    "uncertainty_policy": "If the scene cannot be identified confidently, describe only what is visibly present without assigning a visit stage."
+  },
+
+  "sections": {
+    "use_thin_divider": true,
+    "divider_frequency": "major_topic_changes",
+    "heading_style": "short_noun_phrase",
+
+    "heading_examples": [
+      "매장 내부",
+      "메뉴 및 가격",
+      "기본 상차림",
+      "모듬초밥세트",
+      "카이센동 특",
+      "맛있게 먹는 조합",
+      "마무리"
+    ],
+
+    "subheading": {
+      "required": true,
+      "marker": "[소제목:내용]",
+      "style": "short_noun_phrase"
+    },
+
+    "minor_heading": {
+      "required": false,
+      "marker": "[소소제목:내용]",
+      "style": "one_short_explanatory_phrase"
+    },
+
+    "section_order": [
+      "[소제목:큰 주제]",
+      "[소소제목:선택적인 짧은 설명]",
+      "[구분선]",
+      "section_content_with_at_least_one_photo"
+    ],
+
+    "divider_rules": [
+      "Every divider must belong to a section with a subheading.",
+      "Place the subheading before the divider.",
+      "A minor heading may appear between the subheading and divider.",
+      "Every section after a divider must contain at least one photo or photo group.",
+      "Do not create a divider followed only by explanatory text.",
+      "If no related image exists, merge the text into the nearest section containing an image.",
+      "The final closing section is the only section that may omit a photo."
+    ],
+
+    "correct_examples": [
+      "[소제목:기본 상차림]\n[구분선]\n[사진:실제파일명.jpg | 기본 반찬]",
+      "[소제목:런치 초밥]\n[소소제목:여러 종류를 한 번에 즐기는 구성]\n[구분선]\n[사진:실제파일명.jpg | 초밥 전체 모습]"
+    ],
+
+    "incorrect_examples": [
+      "[소제목:방문 계기와 주문 메뉴]\n[구분선]\n사진 없이 설명 문단만 작성",
+      "[구분선]\n[사진:실제파일명.jpg | 사진 설명]",
+      "[소제목:매장 내부]\n사진 설명\n[구분선]"
+    ]
+  },
+
+  "formatting": {
+    "body_alignment": "center",
+    "bold_usage": "menu_names_and_key_conclusions_only",
+    "bold_marker": "[굵게:내용]",
+    "bold_count": {
+      "min": 4,
+      "max": 8
+    },
+    "bold_entire_paragraph": false,
+
+    "accent_color_marker": "[색상:포인트]내용[/색상]",
+    "accent_color_count": {
+      "min": 2,
+      "max": 4
+    },
+
+    "accent_color_usage": [
+      "restaurant_name",
+      "menu_name",
+      "parking_or_waiting_tip",
+      "one_key_conclusion"
+    ],
+
+    "check_symbol_usage": "ordering_rules_parking_events",
+    "quote_marker": "[인용구:내용]",
+    "quote_block": "optional_and_rare",
+    "markdown_bold_allowed": false
+  },
+
+  "emoji": {
+    "inline_count_range": {
+      "min": 6,
+      "max": 10
+    },
+
+    "placement": "mostly_sentence_end",
+    "density": "low_to_medium",
+    "avoid_repeating_same_emoji": true,
+    "not_allowed_in_information_box": true,
+
+    "examples": ["🍣", "🥢", "🍜", "🍤", "👍", "💛", "😋", "✨", "🙌", "😊"]
+  },
+
+  "stickers": {
+    "count_range": {
+      "min": 3,
+      "max": 5
+    },
+
+    "roles": ["시작", "기대", "감탄", "만족", "마무리"],
+
+    "marker_pattern": "[스티커:역할]",
+    "asset_generation_required": false,
+
+    "rules": [
+      "Keep the sticker role short.",
+      "Do not place a sticker before the information box.",
+      "Do not create a long descriptive sticker name."
+    ]
+  },
+
+  "food_description": {
+    "description_sequence": [
+      "first_impression",
+      "visible_composition_and_quantity",
+      "user_supplied_taste_and_texture",
+      "how_it_was_eaten",
+      "best_bite_or_key_point",
+      "short_personal_reaction"
+    ],
+
+    "choose_two_to_four": [
+      "visible_composition_and_quantity",
+      "visible_ingredients",
+      "taste_from_user_input",
+      "texture_from_user_input",
+      "sauce_and_side_dish_pairing",
+      "change_while_eating",
+      "reorder_intent_or_visit_scenario"
+    ],
+
+    "fact_sources": {
+      "appearance_and_quantity": [
+        "visible_image_details",
+        "user_restaurant_points"
+      ],
+      "taste_aroma_and_texture": ["user_restaurant_points"],
+      "restaurant_information": ["verified_web_search"]
+    },
+
+    "rules": [
+      "Do not infer taste, aroma or texture from an image alone.",
+      "Do not identify an uncertain fish species as certain.",
+      "Do not say that the user ate a menu that the user did not mention.",
+      "Do not turn another blogger's experience into the user's experience."
+    ],
+
+    "avoid_generic_ai_phrases": [
+      "미식의 향연",
+      "입안 가득 풍미",
+      "오감을 만족시키는",
+      "완벽한 조화",
+      "만족도가 높았던 메뉴",
+      "입 안에서 존재감을 주는 스타일",
+      "메뉴 선택지가 잘 맞는 곳",
+      "다시 떠올릴 만한 곳",
+      "깔끔하게 정리되는 맛",
+      "가볍게 참고하기 좋은 후기입니다"
+    ]
+  },
+
+  "allowed_output_markers": [
+    "[정보박스]",
+    "[/정보박스]",
+    "[사진:실제파일명.jpg | 역할]",
+    "[사진묶음:실제파일명1.jpg, 실제파일명2.jpg | 역할]",
+    "[소제목:내용]",
+    "[소소제목:내용]",
+    "[굵게:내용]",
+    "[색상:포인트]내용[/색상]",
+    "[인용구:내용]",
+    "[구분선]",
+    "[스티커:역할]",
+    "[지도]"
+  ],
+
+  "forbidden_output_markers": [
+    "[대표사진:실제파일명.jpg]",
+    "[대표사진: image_NN]",
+    "[사진: image_NN | 역할]",
+    "[굵게]내용[/굵게]",
+    "[소제목]내용[/소제목]",
+    "**Markdown 굵게**"
+  ],
+
+  "generation_checks": [
+    "Generate exactly one title.",
+    "Apply the reference title structure and word order.",
+    "Do not use 후기, 체험 or 리뷰 in the title.",
+    "Do not use a representative image marker.",
+    "Place the information box immediately after the introduction.",
+    "Use every supplied image exactly once unless the user requests otherwise.",
+    "Do not reuse an image inside and outside a photo group.",
+    "Do not invent a facility, menu, price, taste, sponsorship or visit condition.",
+    "Reflect every restaurant point supplied by the user.",
+    "Keep paragraphs short and visually separated.",
+    "Use emphasis sparingly.",
+    "Do not copy wording, titles or facts from reference posts.",
+    "Do not end ordinary Korean sentences with periods.",
+    "Place a subheading before every divider.",
+    "Allow a minor heading between a subheading and divider.",
+    "Include at least one photo after every divider except the final closing section.",
+    "Do not classify a neatly arranged side-dish tray as a post-meal photo.",
+    "Do not add backslashes to photo tags or filenames."
+  ]
+}

@@ -1,0 +1,52 @@
+# Python 캐시
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python 패키징 결과
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.manifest
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 테스트 및 분석 캐시
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 생성된 블로그 글
+output/*
+!output/.gitkeep
+
+# 개인 블로그 이미지
+img/*
+!img/.gitkeep
+
+# 환경변수 및 인증정보
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+
+# 로그
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
