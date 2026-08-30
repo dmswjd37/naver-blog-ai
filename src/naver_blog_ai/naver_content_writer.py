@@ -464,6 +464,12 @@ def _write_inline_text(
     if not bold_ranges:
         return
 
+    # 굵은 영역 중 하나가 문장 끝까지 이어지는지 확인
+    ends_with_bold = any(
+        bold_end == len(plain_text)
+        for _, bold_end in bold_ranges
+    )
+
     # 현재 커서는 문장의 마지막에 있음
     current_position = len(plain_text)
 
@@ -487,9 +493,9 @@ def _write_inline_text(
         page.keyboard.press("ControlOrMeta+B")
         page.wait_for_timeout(250)
 
-        # 선택을 해제하면서 선택 영역의 시작점으로 이동
+        # 선택을 풀고 커서를 굵은 글자의 시작 위치에 둔다
         page.keyboard.press("ArrowLeft")
-        page.wait_for_timeout(100)
+        page.wait_for_timeout(100)        
 
         current_position = bold_start
 
@@ -501,13 +507,16 @@ def _write_inline_text(
 
     page.wait_for_timeout(200)
 
+    # 문장이 굵은 글자로 끝났는지 호출한 곳에 알려줌
+    return ends_with_bold
+
 
 def _write_text_line(
     page: Page,
     editor_frame: Frame,
     text: str,
 ) -> None:
-    _write_inline_text(
+    ends_with_bold = _write_inline_text(
         page=page,
         editor_frame=editor_frame,
         text=text,
@@ -517,6 +526,11 @@ def _write_text_line(
     page.wait_for_timeout(200)
     page.keyboard.press("Enter")
     page.wait_for_timeout(150)
+
+    # 새 줄이 이전 줄의 굵은 상태를 물려받았다면 해제
+    if ends_with_bold:
+        page.keyboard.press("ControlOrMeta+B")
+        page.wait_for_timeout(150)
 
 
 # 인용구 선택

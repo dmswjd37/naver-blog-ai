@@ -320,4 +320,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as error:
         print(f"\n오류: {error}")
         return 1
-    
+
+if __name__ == "__main__":
+    raise SystemExit(main())
