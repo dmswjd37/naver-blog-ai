@@ -163,7 +163,7 @@ def test_menu_description_rejects_tasting_experience() -> None:
     }
     blog_post = """[사진:display.jpg | 주류 진열]
 
-고량주 종류가 다양했고 다음에는 직접 마시고 싶었어요
+진열된 하얼빈 맥주 맛이 좋았어요
 
 [스티커:마무리]
 """
@@ -173,3 +173,70 @@ def test_menu_description_rejects_tasting_experience() -> None:
             blog_post=blog_post,
             photo_plan=photo_plan,
         )
+
+
+def test_actual_eating_experience_is_not_reader_recommendation() -> None:
+    blog_post = """# 제목
+
+테스트 제목
+
+# 본문
+
+소금에도 찍어 먹어보고 초장에도 찍어 먹었는데 초장이 더 좋았어요
+
+[지도]
+"""
+
+    validate_generated_experience_claims(blog_post)
+
+
+def test_reader_recommendation_is_rejected() -> None:
+    blog_post = """# 제목
+
+테스트 제목
+
+# 본문
+
+온면은 같이 주문해 보세요
+
+[지도]
+"""
+
+    with pytest.raises(ValueError, match="독자에게 주문"):
+        validate_generated_experience_claims(blog_post)
+
+
+def test_menu_and_display_selection_phrases_are_allowed() -> None:
+    photo_plan = {
+        "groups": [
+            _group(
+                category="display_or_selection",
+                stage="information",
+                order=1,
+                token="PHOTO_001",
+                caption="주류 진열",
+            ),
+            _group(
+                category="menu_or_price",
+                stage="ordering",
+                order=2,
+                token="PHOTO_002",
+                caption="메뉴판",
+            ),
+        ]
+    }
+    blog_post = """[사진:display.jpg | 주류 진열]
+
+고량주 종류가 많아서 취향에 맞춰 골라 마시기 좋아 보였어요
+
+[사진:menu.jpg | 메뉴판]
+
+민락2지구양꼬치 먹으러 온 날이라 꼬치 메뉴 중심으로 골랐어요
+
+[스티커:마무리]
+"""
+
+    validate_restricted_photo_descriptions(
+        blog_post=blog_post,
+        photo_plan=photo_plan,
+    )
