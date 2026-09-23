@@ -15,6 +15,31 @@ from naver_blog_ai.paths import PROJECT_ROOT
 # PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODEX_TIMEOUT_SECONDS = 900
 MAX_GENERATION_ATTEMPTS = 3
+MAX_PHOTO_ANALYSIS_ATTEMPTS = 2
+
+PHOTO_ANALYSIS_SCHEMA_PATH = (
+    PROJECT_ROOT
+    / "config"
+    / "photo_analysis.schema.json"
+)
+
+PHOTO_ANALYSIS_CATEGORIES = {
+    "place_exterior",
+    "place_interior",
+    "facility_or_service",
+    "notice_or_information",
+    "menu_or_price",
+    "table_setting",
+    "side_dish",
+    "food",
+    "beverage",
+    "cooking_process",
+    "eating_process",
+    "sauce_or_condiment",
+    "dessert",
+    "receipt_or_payment",
+    "other",
+}
 
 PHOTO_MARKER_RE = re.compile(
     r"\[(?:사진|사진묶음|대표사진)\s*:"
@@ -160,20 +185,20 @@ def build_blog_prompt(
     restaurant_points: Sequence[str],
     required_keywords: Sequence[Mapping[str, object]],
     style_profile: Mapping[str, object],
+    photo_plan: Mapping[str, object],
 ) -> str:
     """Codex에 전달할 맛집 블로그 작성 프롬프트를 만든다."""
 
-    photo_token_map = _build_photo_token_map(image_paths)
-
-    image_text = "\n".join(
-        f"- {token} = {filename}"
-        for token, filename in photo_token_map.items()
+    points_text = "\n".join(
+        f"{index}. {point.strip()}"
+        for index, point
+        in enumerate(restaurant_points, start=1)
+        if point.strip()
     )
 
-    points_text = "\n".join(
-        f"- {point.strip()}"
-        for point in restaurant_points
-        if point.strip()
+    photo_plan_text = _format_photo_plan_for_prompt(
+        photo_plan=photo_plan,
+        restaurant_points=restaurant_points,
     )
 
     keyword_text = _format_required_keywords(required_keywords)
@@ -211,29 +236,62 @@ def build_blog_prompt(
 [체험단 필수 키워드]
 {keyword_text}
 
-[첨부 사진 개수]
-총 {image_count}개
+[확정된 사진 배치 계획]
 
-[첨부 사진 토큰과 실제 파일명]
-{image_text}
+{photo_plan_text}
 
-[사진 토큰 사용 규칙]
-- 사진 마커에는 실제 파일명 대신 위 목록의 PHOTO_001 형식 토큰을 사용한다
-- 최종 프로그램이 사진 토큰을 실제 파일명으로 자동 변환한다
-- 위 목록에 없는 PHOTO 토큰을 만들지 않는다
-- PHOTO 번호가 총 사진 개수보다 커지면 안 된다
-- 모든 PHOTO 토큰을 정확히 한 번씩 사용한다
-- 같은 PHOTO 토큰을 단독 사진과 사진묶음에서 중복 사용하지 않는다
-- 첨부 순서는 촬영 순서가 아니라 단순 입력 순서일 수 있다
-- 사진 내용을 직접 분석한 후 적절한 구간에 배치한다
+[사진 계획 사용 규칙]
 
-올바른 예:
-[사진:PHOTO_001 | 매장 내부]
-[사진묶음:PHOTO_002, PHOTO_003 | 초밥 전체와 근접 모습]
+- 위 계획은 별도의 사진 분석 단계를 거친 확정 결과다
+- 사진을 다시 분석하거나 재분류하지 않는다
+- 각 그룹의 marker를 글에 그대로 복사한다
+- marker의 PHOTO 토큰, 순서, 묶음과 caption을 변경하지 않는다
+- 모든 marker를 계획에 나온 순서대로 정확히 한 번 사용한다
+- 서로 다른 그룹을 합치지 않는다
+- 하나의 그룹을 여러 그룹으로 나누지 않는다
+- allowed_points가 비어 있으면 사진에서 확인되는 내용만 설명한다
+- 다른 그룹의 allowed_points를 가져와 사용하지 않는다
+- menu_or_price에서는 메뉴판 구성, 가격, 메뉴 종류와
+  가독성만 설명한다
+- menu_or_price에서 실제 음식의 맛, 식감과 시식 소감을 설명하지 않는다
+- place_exterior와 place_interior에서 음식 맛을 설명하지 않는다
+- food에서는 해당 사진 속 음식과 연결된 경험만 설명한다
+- beverage에서는 해당 음료와 연결된 경험만 설명한다
+- cooking_process에서는 조리 방식과 조리 도구만 설명한다
+- 사진에서 확인되지 않고 allowed_points에도 없는 사실을 만들지 않는다
+- 사용자 입력과 visible_content가 충돌하면 사용자 입력을 우선한다
 
-잘못된 예:
-[사진:PHOTO_030 | 존재하지 않는 사진]
-[사진:실제파일명.jpg | 실제 파일명을 직접 작성]
+[사진 설명 작성 규칙]
+
+- visible_content는 사진을 식별하기 위한 참고 정보다
+- visible_content 항목을 하나씩 본문 문장으로 옮기지 않는다
+- 본문은 allowed_points에 포함된 실제 방문 경험을 중심으로 작성한다
+- 사진에 보이는 그릇 색상, 크기, 위치와 사소한 물체를
+  불필요하게 설명하지 않는다
+- "작은 흰 그릇에 담겨 있었다",
+  "소금 알갱이가 보였다",
+  "사진에서 윤기가 보였다"와 같은
+  단순 관찰 문장을 반복하지 않는다
+- allowed_points가 없는 그룹은 객관적인 설명을
+  최대 1~2문장만 작성한다
+- confidence가 low이면 구체적인 메뉴명, 재료와 소스명을 단정하지 않는다
+- confidence가 medium이면 사용자 입력과 명확히 일치하는 내용만 사용한다
+- 다른 사진 그룹의 경험과 맛 평가를 가져오지 않는다
+
+[경험과 감상 제한]
+
+사용자가 직접 입력하지 않은 다음 내용을 만들지 않는다.
+
+- 다음에는 다른 메뉴를 먹어보고 싶다는 계획
+- 왜 사람들이 주문하는지 알겠다는 평가
+- 주문해볼 만하다는 추천
+- 입맛이 살아난다는 표현
+- 사진을 안 찍을 수 없었다는 표현
+- 먹는 흐름이 이어지는 느낌
+- 기대감이 올라갔다는 감상
+- 가족 외식, 데이트, 회식과 모임 적합성
+
+사용자가 입력한 맛, 식감과 반응만 자연스럽게 표현한다.
 
 [학습한 편집 스타일 프로필]
 {style_text}
@@ -247,7 +305,7 @@ def build_blog_prompt(
 
 [사실 판단 우선순위]
 1. 사용자가 직접 입력한 방문 정보
-2. 첨부 사진에서 명확하게 확인되는 내용
+2. 확정된 사진 계획의 visible_content
 3. 웹 검색으로 검증된 객관적인 매장 정보
 
 [웹 검색 규칙]
@@ -341,48 +399,6 @@ def build_blog_prompt(
 
 정보박스에서 상호명:, 주소:, 영업시간:, 전화번호: 같은 항목명을 쓰지 않는다.
 정보박스에 검색 링크와 URL을 넣지 않는다.
-
-[사진 분류]
-사진을 내부적으로 다음 항목으로 분류한다.
-- 매장 외관
-- 매장 내부
-- 메뉴판과 안내문
-- 음식이 나오기 전 기본 상차림
-- 주문한 음식 전체 모습
-- 음식 근접 사진
-- 음식을 먹는 장면
-- 식사 후 빈 접시와 트레이
-- GIF 또는 짧은 움직이는 이미지
-
-[기본 상차림 판독]
-- 트레이 가운데가 비었다는 이유만으로 식사 후라고 판단하지 않는다
-- 샐러드, 절임 반찬, 간장, 와사비와 장국이 깨끗하게 남아 있으면 기본 상차림이다
-- 빈 메인 접시, 음식물 흔적과 사용한 식기가 명확할 때만 식사 후라고 쓴다
-- 불분명하면 촬영 시점을 단정하지 않고 사진에서 보이는 것만 설명한다
-- 사용자가 알려준 촬영 시점이 사진 추정보다 우선한다
-
-[사진 배치 흐름]
-1. 매장 내부 또는 외관
-2. 메뉴판 또는 안내문
-3. 기본 상차림
-4. 주문 메뉴 전체 모습
-5. 메뉴별 근접 사진
-6. 먹는 장면과 GIF
-7. 명확한 식사 후 사진
-8. 마무리
-9. 지도
-
-첨부 사진에 없는 단계는 생략한다.
-같은 음식의 전체 사진과 근접 사진은 가까운 위치에 배치한다.
-
-[사진 판독 정확성]
-- 안내문 글씨를 한 글자씩 확인한다
-- 글씨를 정확히 읽지 못하면 구체적인 메뉴명을 쓰지 않는다
-- 사진에서 냉모밀처럼 확실한 메뉴는 모호한 표현으로 바꾸지 않는다
-- 불확실한 생선 종류와 재료를 임의로 단정하지 않는다
-- 와이파이 비밀번호와 개인정보를 쓰지 않는다
-- 사진만 보고 혼잡도, 좌석 간격, 혼밥 적합 여부와 모임 적합성을 추측하지 않는다
-- 사진만으로 알 수 없는 맛, 향과 식감을 만들지 않는다
 
 [말투]
 - 실제 예시의 말투와 문장 흐름을 스타일 프로필보다 우선 참고한다
@@ -958,35 +974,79 @@ def validate_blog_post(
 def _build_codex_command(
     codex_command: str,
     image_paths: Sequence[Path],
+    *,
+    use_search: bool = True,
+    output_schema_path: Path | None = None,
 ) -> list[str]:
-    command = [
-        codex_command,
-        "--search",
-        "exec",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--cd",
-        str(PROJECT_ROOT),
-    ]
+    command = [codex_command]
+
+    if use_search:
+        command.append("--search")
+
+    command.extend(
+        [
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--cd",
+            str(PROJECT_ROOT),
+        ]
+    )
+
+    if output_schema_path is not None:
+        command.extend(
+            [
+                "--output-schema",
+                str(output_schema_path),
+            ]
+        )
 
     for image_path in image_paths:
-        command.extend(["--image", str(image_path)])
+        command.extend(
+            [
+                "--image",
+                str(image_path),
+            ]
+        )
 
-    # 프롬프트는 긴 명령행 인자가 아니라 표준 입력으로 전달한다.
     command.append("-")
-    return command
 
+    return command
 
 def _run_codex(
     codex_command: str,
     image_paths: Sequence[Path],
     prompt: str,
+    *,
+    use_search: bool = True,
+    output_schema_path: Path | None = None,
 ) -> str:
+    resolved_schema_path: Path | None = None
+
+    if output_schema_path is not None:
+        resolved_schema_path = (
+            output_schema_path.resolve()
+        )
+
+        if not resolved_schema_path.is_file():
+            raise FileNotFoundError(
+                "Codex 출력 스키마 파일을 찾을 수 없습니다.\n"
+                f"확인할 경로: {resolved_schema_path}"
+            )
+
     command = _build_codex_command(
         codex_command=codex_command,
         image_paths=image_paths,
+        use_search=use_search,
+        output_schema_path=resolved_schema_path,
+    )
+
+    creation_flags = getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        0,
     )
 
     try:
@@ -1000,33 +1060,227 @@ def _run_codex(
             errors="replace",
             timeout=CODEX_TIMEOUT_SECONDS,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=creation_flags,
         )
+
     except subprocess.TimeoutExpired as error:
         raise RuntimeError(
-            "Codex의 블로그 글 생성 시간이 15분을 초과했습니다."
+            "Codex 작업 시간이 "
+            f"{CODEX_TIMEOUT_SECONDS // 60}분을 초과했습니다."
         ) from error
+
     except OSError as error:
         raise RuntimeError(
-            f"Codex CLI를 실행하지 못했습니다: {error}"
+            "Codex CLI를 실행하지 못했습니다.\n"
+            f"{error}"
         ) from error
 
     if result.returncode != 0:
         error_message = result.stderr.strip()
+
         if not error_message:
-            error_message = "Codex CLI에서 상세 오류를 반환하지 않았습니다."
+            error_message = (
+                "Codex CLI에서 상세 오류를 "
+                "반환하지 않았습니다."
+            )
 
         raise RuntimeError(
-            "Codex 블로그 글 생성에 실패했습니다.\n\n"
+            "Codex 작업에 실패했습니다.\n\n"
             f"{error_message}"
         )
 
-    blog_post = result.stdout.strip()
-    if not blog_post:
-        raise RuntimeError("Codex가 빈 블로그 글을 반환했습니다.")
+    output = result.stdout.strip()
 
-    return blog_post
+    if not output:
+        raise RuntimeError(
+            "Codex가 빈 결과를 반환했습니다."
+        )
 
+    return output
+
+def _save_photo_plan(
+    photo_plan: Mapping[str, object],
+) -> Path:
+    """사진 분석 결과를 디버그 파일로 저장한다."""
+
+    debug_dir = (
+        PROJECT_ROOT
+        / "output"
+        / "debug"
+    )
+
+    debug_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = (
+        debug_dir
+        / "photo_plan.json"
+    )
+
+    output_path.write_text(
+        json.dumps(
+            photo_plan,
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return output_path
+
+
+def analyze_photos(
+    codex_command: str,
+    image_paths: Sequence[Path],
+    restaurant_points: Sequence[str],
+) -> dict[str, object]:
+    """
+    Codex로 사진을 분석한 뒤
+    검증된 사진 배치 계획을 반환한다.
+    """
+
+    if not PHOTO_ANALYSIS_SCHEMA_PATH.is_file():
+        raise FileNotFoundError(
+            "사진 분석 스키마를 찾을 수 없습니다.\n"
+            f"확인할 경로: {PHOTO_ANALYSIS_SCHEMA_PATH}"
+        )
+
+    original_prompt = build_photo_analysis_prompt(
+        image_paths=image_paths,
+        restaurant_points=restaurant_points,
+    )
+
+    current_prompt = original_prompt
+    last_error: Exception | None = None
+
+    for attempt in range(
+        1,
+        MAX_PHOTO_ANALYSIS_ATTEMPTS + 1,
+    ):
+        print(
+            "사진 분석 중 "
+            f"({attempt}/"
+            f"{MAX_PHOTO_ANALYSIS_ATTEMPTS})"
+        )
+
+        raw_result = _run_codex(
+            codex_command=codex_command,
+            image_paths=image_paths,
+            prompt=current_prompt,
+            use_search=False,
+            output_schema_path=(
+                PHOTO_ANALYSIS_SCHEMA_PATH
+            ),
+        )
+
+        try:
+            parsed_result = json.loads(
+                raw_result
+            )
+
+            if not isinstance(
+                parsed_result,
+                dict,
+            ):
+                raise ValueError(
+                    "사진 분석 결과가 "
+                    "JSON 객체가 아닙니다."
+                )
+
+            validate_photo_plan(
+                photo_plan=parsed_result,
+                image_paths=image_paths,
+                restaurant_points=restaurant_points,
+            )
+
+            saved_path = _save_photo_plan(
+                parsed_result
+            )
+
+            print(
+                "사진 분석 결과 저장 완료: "
+                f"{saved_path}"
+            )
+
+            return parsed_result
+
+        except (
+            json.JSONDecodeError,
+            ValueError,
+        ) as error:
+            last_error = error
+
+            debug_dir = (
+                PROJECT_ROOT
+                / "output"
+                / "debug"
+            )
+
+            debug_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            invalid_result_path = (
+                debug_dir
+                / (
+                    "invalid_photo_plan_"
+                    f"{attempt}.txt"
+                )
+            )
+
+            invalid_error_path = (
+                debug_dir
+                / (
+                    "invalid_photo_plan_"
+                    f"{attempt}_error.txt"
+                )
+            )
+
+            invalid_result_path.write_text(
+                raw_result,
+                encoding="utf-8",
+            )
+
+            invalid_error_path.write_text(
+                str(error),
+                encoding="utf-8",
+            )
+
+            if (
+                attempt
+                >= MAX_PHOTO_ANALYSIS_ATTEMPTS
+            ):
+                break
+
+            current_prompt = f"""
+{original_prompt}
+
+[이전 사진 분석 검증 실패]
+
+이전 결과에는 다음 오류가 있다.
+
+{error}
+
+[재분석 지시]
+
+- 모든 PHOTO 토큰을 정확히 한 번 사용한다
+- PHOTO 토큰을 누락하거나 중복 사용하지 않는다
+- 존재하지 않는 토큰을 만들지 않는다
+- 관련 없는 사진을 같은 그룹에 넣지 않는다
+- 사용자 포인트 번호를 정확하게 사용한다
+- 수정된 전체 JSON 결과를 다시 반환한다
+""".strip()
+
+    raise RuntimeError(
+        "사진 분석 결과가 검증을 "
+        "통과하지 못했습니다.\n\n"
+        f"마지막 오류:\n{last_error}\n\n"
+        "검증 실패 결과는 "
+        "output/debug 폴더에서 확인할 수 있습니다."
+    )
 
 def _build_retry_prompt(
     original_prompt: str,
@@ -1118,6 +1372,16 @@ def generate_blog_post(
 
     codex_command = find_codex_command()
 
+    print("첨부 사진을 분석하고 있습니다.")
+
+    photo_plan = analyze_photos(
+        codex_command=codex_command,
+        image_paths=resolved_image_paths,
+        restaurant_points=cleaned_points,
+    )
+
+    print("사진 분석과 묶음 구성이 완료되었습니다.")
+
     original_prompt = build_blog_prompt(
         image_paths=resolved_image_paths,
         restaurant_name=restaurant_name.strip(),
@@ -1125,6 +1389,7 @@ def generate_blog_post(
         restaurant_points=cleaned_points,
         required_keywords=required_keywords,
         style_profile=style_profile,
+        photo_plan=photo_plan,
     )
 
     current_prompt = original_prompt
@@ -1133,8 +1398,13 @@ def generate_blog_post(
     for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
         raw_blog_post = _run_codex(
             codex_command=codex_command,
-            image_paths=resolved_image_paths,
+
+            # 사진 분석은 이미 끝났으므로
+            # 글 작성 단계에는 이미지를 다시 전달하지 않는다.
+            image_paths=(),
+
             prompt=current_prompt,
+            use_search=True,
         )
 
         normalized_blog_post = _normalize_blog_post(raw_blog_post)
@@ -1177,4 +1447,638 @@ def generate_blog_post(
         "출력 검증을 통과하지 못했습니다.\n\n"
         f"마지막 오류:\n{last_error}\n\n"
         "검증 실패 초안은 output/debug 폴더에서 확인할 수 있습니다."
+    )
+
+
+def build_photo_analysis_prompt(
+    image_paths: Sequence[Path],
+    restaurant_points: Sequence[str],
+) -> str:
+    """
+    첨부 사진을 분석하고 블로그 작성에 사용할
+    사진 묶음 계획을 JSON으로 생성한다.
+
+    음식점 종류나 특정 메뉴에 종속되지 않는
+    범용 분석 규칙을 사용한다.
+    """
+
+    photo_token_map = _build_photo_token_map(
+        image_paths
+    )
+
+    photo_text = "\n".join(
+        f"- {token} = {filename}"
+        for token, filename
+        in photo_token_map.items()
+    )
+
+    point_text = "\n".join(
+        f"{index}. {point.strip()}"
+        for index, point
+        in enumerate(restaurant_points, start=1)
+        if point.strip()
+    )
+
+    if not point_text:
+        point_text = "사용자 입력 포인트 없음"
+
+    return f"""
+[역할]
+너는 실제 방문 자료를 기반으로 네이버 맛집 블로그 글을 작성한다.
+
+사용자 입력과 확정된 사진 분석 계획을 우선 사용하고,
+글을 쓰기 전에 음식점을 실시간 웹 검색하여
+객관적인 매장 정보를 검증한다.
+
+[첨부 사진 개수]
+
+총 {len(image_paths)}개
+
+[사진 토큰과 실제 파일명]
+
+{photo_text}
+
+[사용자가 직접 입력한 방문 정보]
+
+{point_text}
+
+[분류 카테고리]
+
+각 사진 묶음에는 아래 카테고리 중 하나를 사용한다.
+
+- place_exterior
+  매장 외관, 간판, 입구, 건물 외부
+
+- place_interior
+  좌석, 테이블, 인테리어, 매장 내부 분위기
+
+- facility_or_service
+  주차장, 화장실, 셀프바, 대기 공간,
+  키오스크, 호출벨과 편의시설
+
+- notice_or_information
+  영업 안내, 이용 안내, 행사 안내,
+  원산지 표시와 공지문
+
+- menu_or_price
+  메뉴판, 가격표, 주문 화면과 메뉴 안내
+
+- table_setting
+  음식이 나오기 전 테이블 전체 모습,
+  식기와 기본 상차림
+
+- side_dish
+  기본 반찬, 밑반찬, 빵, 피클,
+  기본 제공 음식
+
+- food
+  실제 주문한 음식, 메인 메뉴,
+  추가 메뉴와 음식 근접 사진
+
+- beverage
+  실제 제공되거나 주문한 음료와 주류
+
+- cooking_process
+  굽기, 끓이기, 자르기, 조리 장면,
+  불판과 조리 기계 사용 모습
+
+- eating_process
+  음식을 집거나 먹는 장면,
+  소스를 찍거나 섞는 장면
+
+- sauce_or_condiment
+  소스, 양념, 향신료와 조미료
+
+- dessert
+  디저트, 후식, 아이스크림과 과일
+
+- receipt_or_payment
+  영수증, 결제 화면과 주문 내역
+
+- other
+  위 분류에 해당하지 않거나
+  사진 내용을 확실하게 판단하기 어려운 경우
+
+[사진 판독 규칙]
+
+1. 실제 사진에서 명확하게 보이는 내용만 판단한다.
+
+2. 파일명, 촬영 순서와 사용자 입력만 보고
+   사진 내용을 추측하지 않는다.
+
+3. 음식 이름을 확실하게 구분할 수 없으면
+   구체적인 메뉴명을 만들지 않는다.
+
+4. 사진에서 맛, 향, 식감과 만족도는
+   직접 확인할 수 없으므로 추측하지 않는다.
+
+5. 사진 속 글씨를 정확하게 읽을 수 없으면
+   메뉴명, 가격과 안내 내용을 임의로 작성하지 않는다.
+
+6. 비슷하게 생긴 음식이라도 확실하지 않으면
+   "구이 메뉴", "면 요리", "음료"처럼
+   일반적인 표현을 사용한다.
+
+7. 사용자가 직접 입력한 정보는 사실 자료로만 사용한다.
+   사용자 입력을 사진에 억지로 연결하지 않는다.
+
+8. 사진 추정과 사용자 입력이 충돌할 경우
+   사용자 입력을 우선한다.
+
+[사진 중심 대상 판독]
+
+1. 사진에서 가장 크고 중앙에 위치한 대상을
+   primary_subject로 정한다.
+
+2. 소스나 반찬이 사진 일부에 보이더라도
+   고기, 면, 음료와 같은 주문 메뉴가 중심이면
+   주문 메뉴를 primary_subject로 정한다.
+
+3. 음식이나 고기를 젓가락, 집게 또는 꼬치로
+   들고 있는 사진은 sauce_or_condiment로 분류하지 않는다.
+
+4. 소스 그릇이나 양념통 자체가 사진의 중심이고
+   음식이 중심에 없을 때만 sauce_or_condiment로 분류한다.
+
+5. 고기를 소스에 찍는 사진은
+   sauce_or_condiment가 아니라 eating_process로 분류한다.
+
+6. 불판 위에 음식이 올라가 있으면 cooking_process로,
+   다 익은 음식을 접시나 젓가락으로 보여주면 food 또는
+   eating_process로 분류한다.
+
+7. 중심 대상을 확신할 수 없으면 confidence를 low로 설정하고
+   구체적인 음식 이름을 사용하지 않는다.
+
+8. 사용자 입력만으로 음식 종류를 확정하지 않는다.
+   다만 사진과 사용자 입력이 함께 일치하면
+   구체적인 메뉴명을 사용할 수 있다.
+
+[식사 진행 순서]
+
+각 그룹에는 narrative_stage와 narrative_order를 지정한다.
+
+다음 의존 관계를 반드시 지킨다.
+
+- 매장 외관은 매장 내부보다 먼저 배치한다
+- 메뉴판은 실제 음식 소개보다 먼저 배치한다
+- 기본 상차림은 메인 음식보다 먼저 배치한다
+- 숯불, 불판과 조리 도구 준비는 굽는 장면보다 먼저 배치한다
+- 생고기와 조리 전 음식은 굽는 장면보다 먼저 배치한다
+- 굽는 장면은 다 익은 음식보다 먼저 배치한다
+- 다 익은 음식은 먹거나 소스에 찍는 장면보다 먼저 배치한다
+- 같은 음식의 사진은 가능한 한 서로 가까이 배치한다
+- narrative_order는 1부터 그룹 수까지 중복 없이 지정한다   
+
+[사진 묶음 규칙]
+
+1. 모든 PHOTO 토큰을 정확히 한 번 사용한다.
+
+2. 같은 PHOTO 토큰을 여러 그룹에 중복 사용하지 않는다.
+
+3. 서로 같은 대상이나 같은 장면을 찍은 사진만 묶는다.
+
+4. 카테고리가 같더라도 서로 다른 음식이나
+   서로 다른 대상을 촬영했다면 별도 그룹으로 나눈다.
+
+5. 같은 음식의 전체 모습, 근접 사진과 다른 각도 사진은
+   하나의 그룹으로 묶을 수 있다.
+
+6. 같은 조리 과정을 연속으로 촬영한 JPG와 GIF는
+   하나의 그룹으로 묶을 수 있다.
+
+7. 서로 관련 없는 음식, 음료, 메뉴판과 매장 사진을
+   한 그룹에 섞지 않는다.
+
+8. 여러 장의 메뉴판 사진은 메뉴판 그룹으로 묶되,
+   실제 주문 음식이나 음료 사진을 함께 넣지 않는다.
+
+9. 기본 반찬 사진은 메인 음식 사진과 분리한다.
+
+10. 소스나 양념만 촬영한 사진은 음식 사진과 구분하되,
+    해당 음식을 찍어 먹는 장면이라면
+    eating_process로 묶을 수 있다.
+
+11. 사진이 한 장만 독립적인 내용을 보여주면
+    한 장짜리 그룹으로 둔다.
+
+12. 사진이 많다는 이유만으로 관련 없는 사진을
+    억지로 묶지 않는다.
+
+[사용자 포인트 연결 규칙]
+
+각 그룹의 allowed_point_indexes에는
+그 사진 묶음 바로 아래에서 사용해도 되는
+사용자 포인트 번호만 넣는다.
+
+1. 사용자 포인트의 대상과 사진 속 대상이
+   명확하게 일치할 때만 연결한다.
+
+2. 관련된 사용자 포인트가 없으면
+   빈 배열을 사용한다.
+
+3. 하나의 사용자 포인트가 여러 사진 그룹과
+   명확하게 관련되면 여러 그룹에 연결할 수 있다.
+
+4. menu_or_price 그룹에는 다음 내용만 연결한다.
+
+   - 메뉴판 형태
+   - 메뉴 종류
+   - 가격
+   - 메뉴판 가독성
+   - 주문 방식
+   - 선택지가 다양하다는 정보
+
+5. menu_or_price 그룹에는 다음 내용을 연결하지 않는다.
+
+   - 실제 주문한 음식의 맛
+   - 음식의 식감
+   - 실제 먹어본 소감
+   - 음료나 주류의 맛
+   - 음식과 음료의 조합
+
+6. place_exterior와 place_interior 그룹에는
+   매장 위치, 분위기, 청결도와 좌석 관련 정보만 연결한다.
+
+7. facility_or_service 그룹에는
+   주차, 화장실, 셀프바, 주문 방식과
+   직원 서비스 관련 정보만 연결한다.
+
+8. side_dish 그룹에는
+   기본 반찬과 기본 제공 음식 관련 정보만 연결한다.
+
+9. food 그룹에는 사진 속 음식과 동일한 메뉴의
+   맛, 식감, 재료와 양에 관한 정보만 연결한다.
+
+10. beverage 그룹에는 사진 속 음료와 동일한 대상의
+    맛과 음식을 함께 먹은 경험만 연결한다.
+
+11. cooking_process 그룹에는
+    굽는 방식, 조리 방법, 불판과 조리 도구에
+    관한 정보만 연결한다.
+
+12. sauce_or_condiment 그룹에는
+    소스, 양념, 향신료와 찍어 먹는 방법에 관한
+    정보만 연결한다.
+
+13. 사진 속 대상을 확실하게 판단할 수 없다면
+    사용자 포인트를 연결하지 않는다.
+
+[caption 작성 규칙]
+
+- caption은 사진에서 보이는 대상을 짧게 설명한다.
+- 맛이나 개인적인 감상은 caption에 넣지 않는다.
+- 확실하지 않은 음식 이름을 만들지 않는다.
+- "맛있는 음식", "만족스러운 메뉴" 같은
+  주관적인 표현을 사용하지 않는다.
+- 사진 묶음 전체를 대표할 수 있는 표현을 사용한다.
+
+올바른 caption 예시:
+
+- 매장 외관과 입구
+- 매장 내부와 테이블
+- 책자 형태의 메뉴판
+- 기본 반찬 구성
+- 주문한 구이 메뉴
+- 불판에서 익어가는 음식
+- 주문한 음료
+- 소스와 테이블 양념
+
+[visible_content 작성 규칙]
+
+- 사진에서 직접 확인되는 시각 정보만 작성한다.
+- 한 그룹당 핵심 내용 1~4개만 작성한다.
+- 맛, 향, 식감과 방문자의 기분을 작성하지 않는다.
+- 메뉴명이나 재료가 불확실하면 일반적인 표현을 사용한다.
+
+[그룹 배치 순서]
+
+블로그에서 자연스럽게 사용할 수 있도록
+가능하면 다음 흐름으로 그룹을 정렬한다.
+
+1. place_exterior
+2. place_interior
+3. facility_or_service
+4. notice_or_information
+5. menu_or_price
+6. table_setting
+7. side_dish
+8. food
+9. cooking_process
+10. eating_process
+11. sauce_or_condiment
+12. beverage
+13. dessert
+14. receipt_or_payment
+15. other
+
+해당 사진이 없는 단계는 만들지 않는다.
+촬영 순서를 그대로 따를 필요는 없다.
+
+[최종 점검]
+
+JSON을 반환하기 전에 내부적으로 확인한다.
+
+- 모든 PHOTO 토큰을 정확히 한 번 사용했는가
+- 중복 사용한 PHOTO 토큰이 없는가
+- 목록에 없는 PHOTO 토큰을 만들지 않았는가
+- 서로 관련 없는 사진이 한 그룹에 섞이지 않았는가
+- 메뉴판 사진에 음식 맛 포인트를 연결하지 않았는가
+- 사진과 사용자 포인트의 대상이 정확히 일치하는가
+- 불확실한 사진에 구체적인 메뉴명을 만들지 않았는가
+
+[출력 형식]
+
+설명, Markdown과 코드 블록을 출력하지 않는다.
+지정된 JSON Schema에 맞는 JSON만 반환한다.
+""".strip()
+
+def validate_photo_plan(
+    photo_plan: Mapping[str, object],
+    image_paths: Sequence[Path],
+    restaurant_points: Sequence[str],
+) -> None:
+    """사진 분석 결과의 토큰, 분류와 포인트 번호를 검증한다."""
+
+    groups = photo_plan.get("groups")
+
+    if not isinstance(groups, list):
+        raise ValueError(
+            "사진 분석 결과에 groups 배열이 없습니다."
+        )
+
+    if not groups:
+        raise ValueError(
+            "사진 분석 결과에 사진 그룹이 없습니다."
+        )
+
+    expected_tokens = set(
+        _build_photo_token_map(image_paths)
+    )
+
+    used_tokens: list[str] = []
+    errors: list[str] = []
+
+    for group_index, group in enumerate(
+        groups,
+        start=1,
+    ):
+        if not isinstance(group, dict):
+            errors.append(
+                f"{group_index}번째 사진 그룹이 "
+                "객체 형식이 아닙니다."
+            )
+            continue
+
+        category = group.get("category")
+
+        if category not in PHOTO_ANALYSIS_CATEGORIES:
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                f"카테고리가 잘못되었습니다: {category}"
+            )
+
+        photo_tokens = group.get("photo_tokens")
+
+        if not isinstance(photo_tokens, list):
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "photo_tokens가 배열이 아닙니다."
+            )
+            continue
+
+        if not photo_tokens:
+            errors.append(
+                f"{group_index}번째 그룹에 "
+                "사진 토큰이 없습니다."
+            )
+
+        for token in photo_tokens:
+            if not isinstance(token, str):
+                errors.append(
+                    f"{group_index}번째 그룹에 "
+                    "문자열이 아닌 토큰이 있습니다."
+                )
+                continue
+
+            used_tokens.append(token)
+
+        caption = group.get("caption")
+
+        if (
+            not isinstance(caption, str)
+            or not caption.strip()
+        ):
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "caption이 비어 있습니다."
+            )
+
+        visible_content = group.get(
+            "visible_content"
+        )
+
+        if not isinstance(visible_content, list):
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "visible_content가 배열이 아닙니다."
+            )
+        else:
+            for content in visible_content:
+                if not isinstance(content, str):
+                    errors.append(
+                        f"{group_index}번째 그룹의 "
+                        "visible_content에 문자열이 아닌 "
+                        "값이 있습니다."
+                    )
+
+        point_indexes = group.get(
+            "allowed_point_indexes"
+        )
+
+        if not isinstance(point_indexes, list):
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "allowed_point_indexes가 배열이 아닙니다."
+            )
+        else:
+            for point_index in point_indexes:
+                # bool은 int의 하위 타입이므로 type으로 검사
+                if type(point_index) is not int:
+                    errors.append(
+                        f"{group_index}번째 그룹에 "
+                        "정수가 아닌 포인트 번호가 있습니다."
+                    )
+                    continue
+
+                if not (
+                    1
+                    <= point_index
+                    <= len(restaurant_points)
+                ):
+                    errors.append(
+                        f"{group_index}번째 그룹에 "
+                        "존재하지 않는 포인트 번호가 있습니다: "
+                        f"{point_index}"
+                    )
+
+    token_counts = Counter(used_tokens)
+
+    duplicated_tokens = sorted(
+        token
+        for token, count in token_counts.items()
+        if count > 1
+    )
+
+    used_token_set = set(used_tokens)
+
+    missing_tokens = sorted(
+        expected_tokens - used_token_set
+    )
+
+    unknown_tokens = sorted(
+        used_token_set - expected_tokens
+    )
+
+    if duplicated_tokens:
+        errors.append(
+            "중복 배치된 사진 토큰: "
+            + ", ".join(duplicated_tokens)
+        )
+
+    if missing_tokens:
+        errors.append(
+            "누락된 사진 토큰: "
+            + ", ".join(missing_tokens)
+        )
+
+    if unknown_tokens:
+        errors.append(
+            "존재하지 않는 사진 토큰: "
+            + ", ".join(unknown_tokens)
+        )
+
+    if errors:
+        raise ValueError(
+            "사진 분석 결과 검증에 실패했습니다.\n\n"
+            + "\n".join(
+                f"- {error}"
+                for error in errors
+            )
+        )
+
+def _format_photo_plan_for_prompt(
+    photo_plan: Mapping[str, object],
+    restaurant_points: Sequence[str],
+) -> str:
+    """
+    사진 분석 결과에 실제 사용자 포인트 내용과
+    그대로 사용할 사진 마커를 추가한다.
+    """
+
+    raw_groups = photo_plan.get("groups")
+
+    if not isinstance(raw_groups, list):
+        raise ValueError(
+            "사진 분석 결과의 groups가 올바르지 않습니다."
+        )
+
+    formatted_groups: list[dict[str, object]] = []
+
+    for group in raw_groups:
+        if not isinstance(group, dict):
+            continue
+
+        raw_tokens = group.get(
+            "photo_tokens",
+            [],
+        )
+
+        photo_tokens = [
+            str(token)
+            for token in raw_tokens
+        ]
+
+        caption = str(
+            group.get("caption", "")
+        ).strip()
+
+        marker_kind = (
+            "사진"
+            if len(photo_tokens) == 1
+            else "사진묶음"
+        )
+
+        marker = (
+            f"[{marker_kind}:"
+            f"{', '.join(photo_tokens)}"
+            f" | {caption}]"
+        )
+
+        raw_point_indexes = group.get(
+            "allowed_point_indexes",
+            [],
+        )
+
+        allowed_points = [
+            restaurant_points[index - 1]
+            for index in raw_point_indexes
+            if (
+                type(index) is int
+                and 1
+                <= index
+                <= len(restaurant_points)
+            )
+        ]
+
+        confidence = str(
+            group.get(
+                "confidence",
+                "low",
+            )
+        )
+
+        # 사진 대상을 확실하게 판독하지 못했으면
+        # 특정 음식의 맛이나 경험을 연결하지 않는다.
+        if confidence == "low":
+            allowed_points = []
+
+        formatted_groups.append(
+            {
+                "marker": marker,
+                "category": group.get("category"),
+                "primary_subject": group.get(
+                    "primary_subject"
+                ),
+                "narrative_stage": group.get(
+                    "narrative_stage"
+                ),
+                "narrative_order": group.get(
+                    "narrative_order"
+                ),
+                "confidence": confidence,
+                "caption": caption,
+                "visible_content": group.get(
+                    "visible_content",
+                    [],
+                ),
+                "allowed_points": allowed_points,
+            }
+        )
+
+        formatted_groups.sort(
+            key=lambda group: int(
+                group.get(
+                    "narrative_order",
+                    999,
+                )
+            )
+        )
+
+    return json.dumps(
+        {
+            "groups": formatted_groups,
+        },
+        ensure_ascii=False,
+        indent=2,
     )

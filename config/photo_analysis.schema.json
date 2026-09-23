@@ -1,0 +1,105 @@
+{
+  "type": "object",
+  "properties": {
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "사진 묶음의 역할",
+            "enum": [
+              "place_exterior",
+              "place_interior",
+              "facility_or_service",
+              "notice_or_information",
+              "menu_or_price",
+              "table_setting",
+              "side_dish",
+              "food",
+              "beverage",
+              "cooking_process",
+              "eating_process",
+              "sauce_or_condiment",
+              "dessert",
+              "receipt_or_payment",
+              "other"
+            ]
+          },
+          "photo_tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "caption": {
+            "type": "string"
+          },
+          "visible_content": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_point_indexes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "primary_subject": {
+            "type": "string",
+            "description": "사진 묶음에서 가장 중심이 되는 대상"
+          },
+          "narrative_stage": {
+            "type": "string",
+            "description": "블로그에서 이 사진이 들어갈 식사 진행 단계",
+            "enum": [
+              "arrival",
+              "interior",
+              "information",
+              "ordering",
+              "table_setup",
+              "beverage",
+              "cooking_setup",
+              "uncooked_food",
+              "cooking",
+              "cooked_food",
+              "eating",
+              "side_menu",
+              "dessert",
+              "after_meal",
+              "other"
+            ]
+          },
+          "narrative_order": {
+            "type": "integer",
+            "description": "블로그에 배치할 순서이며 1부터 연속으로 사용"
+          },
+          "confidence": {
+            "type": "string",
+            "description": "사진 중심 대상 판독 확신도",
+            "enum": ["high", "medium", "low"]
+          }
+        },
+        "required": [
+          "category",
+          "primary_subject",
+          "narrative_stage",
+          "narrative_order",
+          "confidence",
+          "photo_tokens",
+          "caption",
+          "visible_content",
+          "allowed_point_indexes"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["groups"],
+  "additionalProperties": false
+}
