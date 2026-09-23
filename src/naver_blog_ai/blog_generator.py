@@ -4,13 +4,11 @@ import json
 import re
 import shutil
 import subprocess
-
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from naver_blog_ai.paths import PROJECT_ROOT
-
 
 # PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODEX_TIMEOUT_SECONDS = 900
@@ -29,6 +27,7 @@ PHOTO_ANALYSIS_CATEGORIES = {
     "facility_or_service",
     "notice_or_information",
     "menu_or_price",
+    "display_or_selection",
     "table_setting",
     "side_dish",
     "food",
@@ -39,6 +38,43 @@ PHOTO_ANALYSIS_CATEGORIES = {
     "dessert",
     "receipt_or_payment",
     "other",
+}
+
+NARRATIVE_STAGE_ORDER = {
+    "arrival": 10,
+    "interior": 20,
+    "information": 30,
+    "ordering": 40,
+    "table_setup": 50,
+    "beverage": 60,
+    "cooking_setup": 70,
+    "uncooked_food": 80,
+    "cooking": 90,
+    "cooked_food": 100,
+    "eating": 110,
+    "side_menu": 120,
+    "dessert": 130,
+    "after_meal": 140,
+    "other": 150,
+}
+
+ALLOWED_NARRATIVE_STAGES_BY_CATEGORY = {
+    "place_exterior": {"arrival"},
+    "place_interior": {"interior"},
+    "facility_or_service": {"interior", "information"},
+    "notice_or_information": {"information"},
+    "menu_or_price": {"ordering"},
+    "display_or_selection": {"information", "ordering"},
+    "table_setting": {"table_setup"},
+    "side_dish": {"table_setup"},
+    "food": {"uncooked_food", "cooked_food", "side_menu"},
+    "beverage": {"beverage"},
+    "cooking_process": {"cooking_setup", "cooking"},
+    "eating_process": {"eating"},
+    "sauce_or_condiment": {"table_setup", "eating"},
+    "dessert": {"dessert"},
+    "receipt_or_payment": {"after_meal"},
+    "other": {"other"},
 }
 
 PHOTO_MARKER_RE = re.compile(
@@ -67,6 +103,23 @@ TAG_START_RE = re.compile(
     r"|\[태그\]"
     r")[ \t]*$",
     re.MULTILINE,
+)
+
+FUTURE_ORDER_PLAN_RE = re.compile(
+    r"(?:다음(?:에는|엔|번에는?)|재방문(?:하면|할 때))"
+    r"[^\n]{0,40}"
+    r"(?:먹|마시|주문|시키|시켜|도전)"
+)
+
+READER_RECOMMENDATION_RE = re.compile(
+    r"(?:주문|시켜|먹어|마셔|가|들러|방문)"
+    r"(?:해|서|어)?\s*보"
+    r"(?:세요|셔도|길|는 것도|는 걸|기|면|고|ㄹ|을|\s*만)"
+)
+
+MENU_DISPLAY_TASTE_RE = re.compile(
+    r"(?:맛(?:이|은|을|있|없|도)|식감|시식|"
+    r"먹(?:어|었|으|기)|마시|잘\s*어울|조합)"
 )
 
 
@@ -217,8 +270,6 @@ def build_blog_prompt(
         else "지역 정보 없음"
     )
 
-    image_count = len(image_paths)
-
     return f"""
 [역할]
 너는 실제 방문 자료를 기반으로 네이버 맛집 블로그 글을 작성한다.
@@ -253,7 +304,10 @@ def build_blog_prompt(
 - 다른 그룹의 allowed_points를 가져와 사용하지 않는다
 - menu_or_price에서는 메뉴판 구성, 가격, 메뉴 종류와
   가독성만 설명한다
-- menu_or_price에서 실제 음식의 맛, 식감과 시식 소감을 설명하지 않는다
+- display_or_selection에서는 진열된 제품이나 주류의 종류,
+  진열 구성과 선택지만 설명한다
+- menu_or_price와 display_or_selection에서는 실제 음식이나 음료의
+  맛, 식감, 시식 소감과 음식 조합을 설명하지 않는다
 - place_exterior와 place_interior에서 음식 맛을 설명하지 않는다
 - food에서는 해당 사진 속 음식과 연결된 경험만 설명한다
 - beverage에서는 해당 음료와 연결된 경험만 설명한다
@@ -283,8 +337,10 @@ def build_blog_prompt(
 사용자가 직접 입력하지 않은 다음 내용을 만들지 않는다.
 
 - 다음에는 다른 메뉴를 먹어보고 싶다는 계획
+- 다음에 주문하거나 마셔보고 싶다는 계획
 - 왜 사람들이 주문하는지 알겠다는 평가
 - 주문해볼 만하다는 추천
+- 독자에게 먹기, 마시기, 주문과 방문을 권하는 표현
 - 입맛이 살아난다는 표현
 - 사진을 안 찍을 수 없었다는 표현
 - 먹는 흐름이 이어지는 느낌
@@ -850,6 +906,155 @@ def validate_photo_filenames(
         )
 
 
+def validate_photo_marker_plan(
+    blog_post: str,
+    image_paths: Sequence[Path],
+    photo_plan: Mapping[str, object],
+) -> None:
+    """사진 묶음과 순서가 확정된 계획과 같은지 검사한다."""
+
+    token_map = _build_photo_token_map(image_paths)
+    expected_markers: list[tuple[str, tuple[str, ...], str]] = []
+
+    for group in _ordered_photo_plan_groups(photo_plan):
+        raw_tokens = group.get("photo_tokens", [])
+        tokens = [str(token) for token in raw_tokens]
+        filenames = tuple(
+            token_map.get(token, token)
+            for token in tokens
+        )
+        kind = "사진" if len(filenames) == 1 else "사진묶음"
+        caption = str(group.get("caption", "")).strip()
+        expected_markers.append((kind, filenames, caption))
+
+    actual_markers: list[tuple[str, tuple[str, ...], str]] = []
+
+    for match in PHOTO_MARKER_FULL_RE.finditer(blog_post):
+        filenames = tuple(
+            filename.strip().replace("\\_", "_").replace("\\:", ":")
+            for filename in match.group("filenames").split(",")
+            if filename.strip()
+        )
+        raw_description = match.group("description") or ""
+        caption = (
+            raw_description.split("|", 1)[1].strip()
+            if "|" in raw_description
+            else ""
+        )
+        actual_markers.append(
+            (match.group("kind"), filenames, caption)
+        )
+
+    if actual_markers == expected_markers:
+        return
+
+    errors: list[str] = []
+
+    if len(actual_markers) != len(expected_markers):
+        errors.append(
+            "사진 그룹 개수가 계획과 다릅니다: "
+            f"계획 {len(expected_markers)}개 / 본문 {len(actual_markers)}개"
+        )
+
+    for index, (expected, actual) in enumerate(
+        zip(expected_markers, actual_markers, strict=False),
+        start=1,
+    ):
+        if expected == actual:
+            continue
+
+        errors.append(
+            f"{index}번째 사진 그룹이 계획과 다릅니다. "
+            f"계획={expected}, 본문={actual}"
+        )
+
+    raise ValueError(
+        "생성된 글의 사진 묶음 또는 배치 순서가 "
+        "확정된 계획과 다릅니다.\n\n"
+        + "\n".join(f"- {error}" for error in errors)
+    )
+
+
+def validate_generated_experience_claims(blog_post: str) -> None:
+    """사용자에게 없는 미래 계획과 독자 권유 표현을 거부한다."""
+
+    _, body = _parse_title_and_body(blog_post)
+    tag_start = TAG_START_RE.search(body)
+    body_without_tags = (
+        body[: tag_start.start()].rstrip()
+        if tag_start is not None
+        else body
+    )
+
+    checks = [
+        ("방문자의 미래 주문 계획", FUTURE_ORDER_PLAN_RE),
+        ("독자에게 주문이나 방문을 권하는 표현", READER_RECOMMENDATION_RE),
+    ]
+
+    errors: list[str] = []
+
+    for label, pattern in checks:
+        match = pattern.search(body_without_tags)
+        if match is not None:
+            errors.append(f"{label}: {match.group(0)}")
+
+    if errors:
+        raise ValueError(
+            "사용자가 입력하지 않은 계획 또는 권유 표현이 있습니다.\n\n"
+            + "\n".join(f"- {error}" for error in errors)
+        )
+
+
+def validate_restricted_photo_descriptions(
+    blog_post: str,
+    photo_plan: Mapping[str, object],
+) -> None:
+    """메뉴판·진열 사진 아래에 맛 경험이 섞이지 않았는지 검사한다."""
+
+    markers = list(PHOTO_MARKER_FULL_RE.finditer(blog_post))
+    groups = _ordered_photo_plan_groups(photo_plan)
+
+    if len(markers) != len(groups):
+        return
+
+    boundary_re = re.compile(
+        r"\n\s*\[(?:사진|사진묶음|대표사진|소제목|소소제목|"
+        r"구분선|스티커|지도|태그)\s*:?.*"
+    )
+    errors: list[str] = []
+
+    for index, (marker, group) in enumerate(
+        zip(markers, groups, strict=True),
+        start=1,
+    ):
+        if group.get("category") not in {
+            "menu_or_price",
+            "display_or_selection",
+        }:
+            continue
+
+        remaining_text = blog_post[marker.end() :]
+        boundary = boundary_re.search(remaining_text)
+        description = (
+            remaining_text[: boundary.start()]
+            if boundary is not None
+            else remaining_text
+        )
+        taste_match = MENU_DISPLAY_TASTE_RE.search(description)
+
+        if taste_match is not None:
+            errors.append(
+                f"{index}번째 {group.get('category')} 그룹에 "
+                f"맛 또는 시식 표현이 있습니다: {taste_match.group(0)}"
+            )
+
+    if errors:
+        raise ValueError(
+            "메뉴판 또는 진열 사진 설명 범위를 벗어난 내용이 있습니다.\n\n"
+            + "\n".join(f"- {error}" for error in errors)
+        )
+
+
 def validate_required_keywords(
     blog_post: str,
     required_keywords: Sequence[Mapping[str, object]],
@@ -952,6 +1157,7 @@ def validate_blog_post(
     blog_post: str,
     image_paths: Sequence[Path],
     required_keywords: Sequence[Mapping[str, object]],
+    photo_plan: Mapping[str, object] | None = None,
 ) -> None:
     """생성 결과의 핵심 구조를 한 번에 검증한다."""
 
@@ -964,6 +1170,17 @@ def validate_blog_post(
         blog_post=blog_post,
         image_paths=image_paths,
     )
+    if photo_plan is not None:
+        validate_photo_marker_plan(
+            blog_post=blog_post,
+            image_paths=image_paths,
+            photo_plan=photo_plan,
+        )
+        validate_restricted_photo_descriptions(
+            blog_post=blog_post,
+            photo_plan=photo_plan,
+        )
+    validate_generated_experience_claims(blog_post)
     validate_required_keywords(
         blog_post=blog_post,
         required_keywords=required_keywords,
@@ -1271,6 +1488,9 @@ def analyze_photos(
 - 존재하지 않는 토큰을 만들지 않는다
 - 관련 없는 사진을 같은 그룹에 넣지 않는다
 - 사용자 포인트 번호를 정확하게 사용한다
+- category와 narrative_stage의 허용 관계를 지킨다
+- narrative_order를 1부터 그룹 수까지 중복 없이 사용한다
+- 주류 진열 사진과 실제 주문한 주류 사진을 구분한다
 - 수정된 전체 JSON 결과를 다시 반환한다
 """.strip()
 
@@ -1422,6 +1642,7 @@ def generate_blog_post(
                 blog_post=blog_post,
                 image_paths=resolved_image_paths,
                 required_keywords=required_keywords,
+                photo_plan=photo_plan,
             )
             return blog_post
 
@@ -1484,11 +1705,11 @@ def build_photo_analysis_prompt(
 
     return f"""
 [역할]
-너는 실제 방문 자료를 기반으로 네이버 맛집 블로그 글을 작성한다.
+너는 음식점 종류와 메뉴에 관계없이 첨부 사진을 판독하는 분석기다.
 
-사용자 입력과 확정된 사진 분석 계획을 우선 사용하고,
-글을 쓰기 전에 음식점을 실시간 웹 검색하여
-객관적인 매장 정보를 검증한다.
+이 단계에서는 블로그 글을 작성하거나 웹 검색을 하지 않는다.
+각 사진의 중심 대상, 식사 진행 단계와 연결 가능한 사용자 정보만
+구조화된 사진 배치 계획으로 만든다.
 
 [첨부 사진 개수]
 
@@ -1523,6 +1744,10 @@ def build_photo_analysis_prompt(
 - menu_or_price
   메뉴판, 가격표, 주문 화면과 메뉴 안내
 
+- display_or_selection
+  판매 또는 선택 가능한 제품의 진열대와 쇼케이스,
+  주문하지 않은 주류 병 진열과 상품 전시
+
 - table_setting
   음식이 나오기 전 테이블 전체 모습,
   식기와 기본 상차림
@@ -1536,7 +1761,7 @@ def build_photo_analysis_prompt(
   추가 메뉴와 음식 근접 사진
 
 - beverage
-  실제 제공되거나 주문한 음료와 주류
+  실제 테이블에 제공되거나 주문한 음료와 주류
 
 - cooking_process
   굽기, 끓이기, 자르기, 조리 장면,
@@ -1614,6 +1839,13 @@ def build_photo_analysis_prompt(
    다만 사진과 사용자 입력이 함께 일치하면
    구체적인 메뉴명을 사용할 수 있다.
 
+9. 메뉴판이나 가격표는 menu_or_price로 분류한다.
+   병, 제품과 디저트 등이 선반이나 쇼케이스에 진열된 모습은
+   display_or_selection으로 분류한다.
+
+10. 주류 병이 진열대에 놓인 사진은 beverage가 아니다.
+    실제 주문해 테이블에 나온 주류만 beverage로 분류한다.
+
 [식사 진행 순서]
 
 각 그룹에는 narrative_stage와 narrative_order를 지정한다.
@@ -1629,6 +1861,24 @@ def build_photo_analysis_prompt(
 - 다 익은 음식은 먹거나 소스에 찍는 장면보다 먼저 배치한다
 - 같은 음식의 사진은 가능한 한 서로 가까이 배치한다
 - narrative_order는 1부터 그룹 수까지 중복 없이 지정한다   
+
+category별로 사용할 수 있는 narrative_stage는 다음과 같다.
+
+- place_exterior: arrival
+- place_interior: interior
+- facility_or_service: interior 또는 information
+- notice_or_information: information
+- menu_or_price: ordering
+- display_or_selection: information 또는 ordering
+- table_setting, side_dish: table_setup
+- beverage: beverage
+- cooking_process: cooking_setup 또는 cooking
+- food: uncooked_food, cooked_food 또는 side_menu
+- eating_process: eating
+- sauce_or_condiment: table_setup 또는 eating
+- dessert: dessert
+- receipt_or_payment: after_meal
+- other: other
 
 [사진 묶음 규칙]
 
@@ -1653,17 +1903,19 @@ def build_photo_analysis_prompt(
 8. 여러 장의 메뉴판 사진은 메뉴판 그룹으로 묶되,
    실제 주문 음식이나 음료 사진을 함께 넣지 않는다.
 
-9. 기본 반찬 사진은 메인 음식 사진과 분리한다.
+9. 진열대 사진은 실제 주문한 음료나 음식 사진과 묶지 않는다.
 
-10. 소스나 양념만 촬영한 사진은 음식 사진과 구분하되,
-    해당 음식을 찍어 먹는 장면이라면
-    eating_process로 묶을 수 있다.
+10. 기본 반찬 사진은 메인 음식 사진과 분리한다.
 
-11. 사진이 한 장만 독립적인 내용을 보여주면
-    한 장짜리 그룹으로 둔다.
+11. 소스나 양념만 촬영한 사진은 음식 사진과 구분하되,
+     해당 음식을 찍어 먹는 장면이라면
+     eating_process로 묶을 수 있다.
 
-12. 사진이 많다는 이유만으로 관련 없는 사진을
-    억지로 묶지 않는다.
+12. 사진이 한 장만 독립적인 내용을 보여주면
+     한 장짜리 그룹으로 둔다.
+
+13. 사진이 많다는 이유만으로 관련 없는 사진을
+     억지로 묶지 않는다.
 
 [사용자 포인트 연결 규칙]
 
@@ -1697,32 +1949,37 @@ def build_photo_analysis_prompt(
    - 음료나 주류의 맛
    - 음식과 음료의 조합
 
-6. place_exterior와 place_interior 그룹에는
+6. display_or_selection 그룹에는 진열된 제품이나 주류의 종류,
+   진열 구성과 선택지가 다양하다는 정보만 연결한다.
+   실제 주문한 음식이나 음료의 맛, 식감, 시식 소감과
+   음식 조합은 연결하지 않는다.
+
+7. place_exterior와 place_interior 그룹에는
    매장 위치, 분위기, 청결도와 좌석 관련 정보만 연결한다.
 
-7. facility_or_service 그룹에는
+8. facility_or_service 그룹에는
    주차, 화장실, 셀프바, 주문 방식과
    직원 서비스 관련 정보만 연결한다.
 
-8. side_dish 그룹에는
+9. side_dish 그룹에는
    기본 반찬과 기본 제공 음식 관련 정보만 연결한다.
 
-9. food 그룹에는 사진 속 음식과 동일한 메뉴의
+10. food 그룹에는 사진 속 음식과 동일한 메뉴의
    맛, 식감, 재료와 양에 관한 정보만 연결한다.
 
-10. beverage 그룹에는 사진 속 음료와 동일한 대상의
-    맛과 음식을 함께 먹은 경험만 연결한다.
+11. beverage 그룹에는 사진 속 음료와 동일한 대상의
+     맛과 음식을 함께 먹은 경험만 연결한다.
 
-11. cooking_process 그룹에는
-    굽는 방식, 조리 방법, 불판과 조리 도구에
-    관한 정보만 연결한다.
+12. cooking_process 그룹에는
+     굽는 방식, 조리 방법, 불판과 조리 도구에
+     관한 정보만 연결한다.
 
-12. sauce_or_condiment 그룹에는
-    소스, 양념, 향신료와 찍어 먹는 방법에 관한
-    정보만 연결한다.
+13. sauce_or_condiment 그룹에는
+     소스, 양념, 향신료와 찍어 먹는 방법에 관한
+     정보만 연결한다.
 
-13. 사진 속 대상을 확실하게 판단할 수 없다면
-    사용자 포인트를 연결하지 않는다.
+14. 사진 속 대상을 확실하게 판단할 수 없다면
+     사용자 포인트를 연결하지 않는다.
 
 [caption 작성 규칙]
 
@@ -1753,23 +2010,23 @@ def build_photo_analysis_prompt(
 
 [그룹 배치 순서]
 
-블로그에서 자연스럽게 사용할 수 있도록
-가능하면 다음 흐름으로 그룹을 정렬한다.
+category 순서가 아니라 narrative_stage를 기준으로
+다음 흐름에 맞춰 그룹을 정렬한다.
 
-1. place_exterior
-2. place_interior
-3. facility_or_service
-4. notice_or_information
-5. menu_or_price
-6. table_setting
-7. side_dish
-8. food
-9. cooking_process
-10. eating_process
-11. sauce_or_condiment
-12. beverage
+1. arrival
+2. interior
+3. information
+4. ordering
+5. table_setup
+6. beverage
+7. cooking_setup
+8. uncooked_food
+9. cooking
+10. cooked_food
+11. eating
+12. side_menu
 13. dessert
-14. receipt_or_payment
+14. after_meal
 15. other
 
 해당 사진이 없는 단계는 만들지 않는다.
@@ -1792,6 +2049,7 @@ JSON을 반환하기 전에 내부적으로 확인한다.
 설명, Markdown과 코드 블록을 출력하지 않는다.
 지정된 JSON Schema에 맞는 JSON만 반환한다.
 """.strip()
+
 
 def validate_photo_plan(
     photo_plan: Mapping[str, object],
@@ -1817,6 +2075,7 @@ def validate_photo_plan(
     )
 
     used_tokens: list[str] = []
+    narrative_orders: list[int] = []
     errors: list[str] = []
 
     for group_index, group in enumerate(
@@ -1836,6 +2095,52 @@ def validate_photo_plan(
             errors.append(
                 f"{group_index}번째 그룹의 "
                 f"카테고리가 잘못되었습니다: {category}"
+            )
+
+        primary_subject = group.get("primary_subject")
+
+        if (
+            not isinstance(primary_subject, str)
+            or not primary_subject.strip()
+        ):
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "primary_subject가 비어 있습니다."
+            )
+
+        narrative_stage = group.get("narrative_stage")
+
+        if narrative_stage not in NARRATIVE_STAGE_ORDER:
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                f"narrative_stage가 잘못되었습니다: {narrative_stage}"
+            )
+        elif category in ALLOWED_NARRATIVE_STAGES_BY_CATEGORY:
+            allowed_stages = ALLOWED_NARRATIVE_STAGES_BY_CATEGORY[category]
+
+            if narrative_stage not in allowed_stages:
+                errors.append(
+                    f"{group_index}번째 그룹의 category와 "
+                    "narrative_stage가 맞지 않습니다: "
+                    f"{category} / {narrative_stage}"
+                )
+
+        narrative_order = group.get("narrative_order")
+
+        if type(narrative_order) is not int:
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                "narrative_order가 정수가 아닙니다."
+            )
+        else:
+            narrative_orders.append(narrative_order)
+
+        confidence = group.get("confidence")
+
+        if confidence not in {"high", "medium", "low"}:
+            errors.append(
+                f"{group_index}번째 그룹의 "
+                f"confidence가 잘못되었습니다: {confidence}"
             )
 
         photo_tokens = group.get("photo_tokens")
@@ -1884,12 +2189,21 @@ def validate_photo_plan(
                 "visible_content가 배열이 아닙니다."
             )
         else:
+            if not visible_content:
+                errors.append(
+                    f"{group_index}번째 그룹의 "
+                    "visible_content가 비어 있습니다."
+                )
+
             for content in visible_content:
-                if not isinstance(content, str):
+                if (
+                    not isinstance(content, str)
+                    or not content.strip()
+                ):
                     errors.append(
                         f"{group_index}번째 그룹의 "
-                        "visible_content에 문자열이 아닌 "
-                        "값이 있습니다."
+                        "visible_content에 비어 있거나 "
+                        "문자열이 아닌 값이 있습니다."
                     )
 
         point_indexes = group.get(
@@ -1958,6 +2272,38 @@ def validate_photo_plan(
             + ", ".join(unknown_tokens)
         )
 
+    expected_orders = set(range(1, len(groups) + 1))
+    order_counts = Counter(narrative_orders)
+    duplicated_orders = sorted(
+        order
+        for order, count in order_counts.items()
+        if count > 1
+    )
+    missing_orders = sorted(
+        expected_orders - set(narrative_orders)
+    )
+    unknown_orders = sorted(
+        set(narrative_orders) - expected_orders
+    )
+
+    if duplicated_orders:
+        errors.append(
+            "중복된 narrative_order: "
+            + ", ".join(map(str, duplicated_orders))
+        )
+
+    if missing_orders:
+        errors.append(
+            "누락된 narrative_order: "
+            + ", ".join(map(str, missing_orders))
+        )
+
+    if unknown_orders:
+        errors.append(
+            "범위를 벗어난 narrative_order: "
+            + ", ".join(map(str, unknown_orders))
+        )
+
     if errors:
         raise ValueError(
             "사진 분석 결과 검증에 실패했습니다.\n\n"
@@ -1966,6 +2312,37 @@ def validate_photo_plan(
                 for error in errors
             )
         )
+
+
+def _ordered_photo_plan_groups(
+    photo_plan: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """식사 흐름을 우선해 사진 그룹을 결정적으로 정렬한다."""
+
+    raw_groups = photo_plan.get("groups")
+
+    if not isinstance(raw_groups, list):
+        raise ValueError(
+            "사진 분석 결과의 groups가 올바르지 않습니다."
+        )
+
+    groups = [
+        group
+        for group in raw_groups
+        if isinstance(group, dict)
+    ]
+
+    return sorted(
+        groups,
+        key=lambda group: (
+            NARRATIVE_STAGE_ORDER.get(
+                str(group.get("narrative_stage")),
+                999,
+            ),
+            int(group.get("narrative_order", 999)),
+        ),
+    )
+
 
 def _format_photo_plan_for_prompt(
     photo_plan: Mapping[str, object],
@@ -1976,19 +2353,9 @@ def _format_photo_plan_for_prompt(
     그대로 사용할 사진 마커를 추가한다.
     """
 
-    raw_groups = photo_plan.get("groups")
-
-    if not isinstance(raw_groups, list):
-        raise ValueError(
-            "사진 분석 결과의 groups가 올바르지 않습니다."
-        )
-
     formatted_groups: list[dict[str, object]] = []
 
-    for group in raw_groups:
-        if not isinstance(group, dict):
-            continue
-
+    for group in _ordered_photo_plan_groups(photo_plan):
         raw_tokens = group.get(
             "photo_tokens",
             [],
@@ -2064,15 +2431,6 @@ def _format_photo_plan_for_prompt(
                 ),
                 "allowed_points": allowed_points,
             }
-        )
-
-        formatted_groups.sort(
-            key=lambda group: int(
-                group.get(
-                    "narrative_order",
-                    999,
-                )
-            )
         )
 
     return json.dumps(
