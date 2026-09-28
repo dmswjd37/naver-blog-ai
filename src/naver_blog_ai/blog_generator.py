@@ -117,6 +117,46 @@ def load_style_examples() -> str:
     return "\n\n".join(examples) if examples else "말투 예시 파일 없음"
 
 
+def load_title_style_examples() -> str:
+    """스타일 예시에서 [제목 스타일]만 추출해 제목 전용 참고 자료로 만든다."""
+
+    directories = [
+        PROJECT_ROOT / "style_examples",
+        PROJECT_ROOT / "references" / "style_examples",
+        PROJECT_ROOT / "data" / "style_examples",
+    ]
+
+    example_paths: list[Path] = []
+    for directory in directories:
+        if directory.is_dir():
+            example_paths.extend(sorted(directory.glob("*.md")))
+
+    title_examples: list[str] = []
+    seen_titles: set[str] = set()
+    title_pattern = re.compile(
+        r"\[제목 스타일\]\s*\n+\"\"\"\s*\n(?P<title>.*?)\n\s*\"\"\"",
+        re.DOTALL,
+    )
+
+    for path in example_paths:
+        contents = path.read_text(encoding="utf-8")
+        match = title_pattern.search(contents)
+        if match is None:
+            continue
+
+        title = " ".join(match.group("title").split()).strip()
+        if not title or title in seen_titles:
+            continue
+
+        seen_titles.add(title)
+        title_examples.append(f"- {title}")
+
+    if not title_examples:
+        return "- 제목 스타일 예시 없음"
+
+    return "\n".join(title_examples)
+
+
 def _build_photo_token_map(
     image_paths: Sequence[Path],
 ) -> dict[str, str]:
@@ -185,6 +225,7 @@ def build_blog_prompt(
     )
 
     style_examples_text = load_style_examples()
+    title_style_examples_text = load_title_style_examples()
 
     location_text = (
         restaurant_location.strip()
@@ -273,28 +314,25 @@ def build_blog_prompt(
 [제목]
 - 제목은 정확히 한 개만 작성한다
 - 제목 후보와 번호를 출력하지 않는다
-- 지역, 구체적인 검색 키워드, 가게명, 대표 메뉴와 핵심 특징을 자연스럽게 연결한다
-- 아래 실제 스타일 예시들의 제목은 단어를 복사하는 자료가 아니라 제목 구조와 리듬을 다양하게 만드는 참고 자료다
-- 매번 '지역 + 맛집 키워드 + 가게명 + 메뉴명 + 후기/먹방' 같은 고정 공식을 사용하지 않는다
-- 특히 제목 끝을 습관적으로 '후기', '먹방'으로 마무리하지 않는다
-- '후기'는 내용상 자연스러운 경우에만 사용할 수 있으며, 다른 특징으로 제목을 끝낼 수 있으면 그쪽을 우선한다
-- '먹방'은 사용자가 직접 입력한 표현이거나 방문 정보상 명확히 필요한 경우가 아니면 제목에 사용하지 않는다
-- 가게명을 작은따옴표, 큰따옴표 또는 Markdown 기호로 감싸지 않는다
-- 제목에는 아래와 같은 서로 다른 구조 중 현재 글의 사실에 가장 맞는 구조를 선택한다:
-  1. 지역/검색키워드 + 가게명 + 대표 메뉴/특징
-  2. 지역/검색키워드 + 핵심 이용 정보 + 가게명
-  3. 지역/검색키워드 + 가게명 + 대표 메뉴 + 검증된 주차/예약/웨이팅 정보
-  4. 지역/검색키워드 + 대표 메뉴의 구체적 특징 + 가게명
-  5. 지역/검색키워드 + 가게명 + 사용자가 직접 경험한 핵심 포인트
-- 위 구조는 순서를 그대로 복사하라는 뜻이 아니며, 실제 스타일 예시처럼 어순과 강조점을 자연스럽게 바꾼다
-- 같은 의미의 지역 키워드를 연달아 중복 나열하지 않는다
-- 예시 블로그의 제목 길이와 단어 배치 방식을 참고한다
-- 약 30~55자의 검색형 제목으로 작성한다
-- 제목에 이모지와 과도한 특수문자를 사용하지 않는다
-- 사용자가 입력하지 않은 가족 외식, 데이트, 혼밥, 회식과 모임을 만들지 않는다
-- 가격, 주차, 예약과 웨이팅은 검증됐을 때만 제목에 쓴다
 - 사용자가 요구한 필수 제목 키워드는 띄어쓰기까지 그대로 포함한다
+- 아래 [제목 스타일 레퍼런스]를 제목 작성의 가장 중요한 스타일 기준으로 사용한다
+- 레퍼런스의 장소명, 가게명, 메뉴명, 가격과 방문 경험은 복사하지 않는다
+- 레퍼런스에서 제목의 어순, 정보 조합 방식, 강조점, 길이와 리듬을 학습해 새 글의 사실에 맞는 제목을 새로 만든다
+- 레퍼런스들을 하나의 고정 공식으로 일반화하지 않는다
+- 새 글의 지역, 검색 키워드, 가게명, 메뉴, 사용자가 입력한 방문 정보와 검증된 매장 정보 중 제목 가치가 높은 정보만 골라 자연스럽게 조합한다
+- 모든 정보를 제목에 억지로 나열하지 않는다
+- '후기', '먹방', '추천', '내돈내산' 같은 단어를 기본 종결어처럼 붙이지 않는다
+- 이런 표현도 새 글의 실제 정보와 제목 흐름에 자연스럽게 맞을 때만 사용한다
+- 사용자가 입력하지 않았거나 웹에서 검증되지 않은 경험, 방문 목적, 가격, 주차, 예약과 웨이팅 정보를 제목용으로 만들지 않는다
+- 제목에 이모지와 불필요한 특수문자를 사용하지 않는다
 - 제목을 Markdown 별표로 감싸지 않는다
+- 약 30~55자를 기본 범위로 참고하되, 글자 수를 맞추기 위한 어색한 단어 추가보다 레퍼런스와 비슷한 자연스러운 제목 리듬을 우선한다
+
+[제목 스타일 레퍼런스]
+아래 제목들은 references/style_examples의 [제목 스타일]에서 자동으로 가져온다.
+내용을 복사하지 말고 스타일만 참고한다.
+
+{title_style_examples_text}
 
 [본문 시작 순서]
 다음 순서를 다른 규칙보다 우선한다.
