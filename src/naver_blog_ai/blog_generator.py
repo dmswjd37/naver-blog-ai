@@ -44,6 +44,11 @@ TAG_START_RE = re.compile(
     re.MULTILINE,
 )
 
+CLOSING_MARKER_RE = re.compile(
+    r"^[ \t]*\[마무리\][ \t]*$",
+    re.MULTILINE,
+)
+
 
 def find_codex_command() -> str:
     """Windows에 설치된 Codex CLI 실행 파일을 찾는다."""
@@ -581,6 +586,8 @@ def build_blog_prompt(
 - [스티커:기대], [스티커:감탄], [스티커:만족], [스티커:마무리]처럼 짧게 쓴다
 - 글 전체에서 3~5회 사용한다
 - 소제목과 구분선 사이에는 넣지 않는다
+- 마지막 마무리 문단 앞뒤에는 스티커를 넣지 않는다
+- [스티커:만족]과 [스티커:마무리]를 [마무리] 대신 사용하지 않는다
 - 프로그램이 지원하지 않더라도 마커 형식은 유지한다
 
 [음식 설명]
@@ -615,7 +622,11 @@ def build_blog_prompt(
 - 같은 사진 설명 구조의 반복
 
 [마무리]
-- 마무리 구간에는 [소제목:마무리]를 사용하지 않습니다
+- 마무리 구간에는 [소제목:마무리]를 사용하지 않는다
+- 마지막 음식 설명이 끝난 뒤 [마무리] 마커를 정확히 한 번 사용한다
+- [마무리] 바로 다음부터 최종 소감 문단을 작성한다
+- [마무리] 마커는 네이버 에디터에서 본문 상단과 다른 모양의 마무리 전용 구분선으로 변환된다
+- [마무리] 뒤에는 사진과 스티커를 넣지 않는다
 - 음식 소개 뒤 4~6개의 짧은 문단으로 마무리한다
 - 주문 메뉴를 전부 다시 나열하지 않는다
 - 사용자가 가장 좋았다고 입력한 포인트를 중심으로 끝낸다
@@ -652,6 +663,8 @@ def build_blog_prompt(
 - 서로 다른 메뉴를 하나의 사진묶음으로 잘못 합치지 않았는가
 - 각 사진 아래 설명이 해당 사진의 중심 대상과 일치하는가
 - 사진에 없는 조리 과정이나 식사 경험을 만들지 않았는가
+- 마지막 음식 설명 뒤에 [마무리]가 정확히 한 번 있는가
+- [마무리] 뒤에 사진이나 스티커가 없는가
 
 [최종 출력]
 작성 과정, 검색 출처, 사진 분석표와 점검 결과를 출력하지 않는다.
@@ -1076,6 +1089,59 @@ def validate_heading_dividers(blog_post: str) -> None:
                 "[사진:...] 또는 [사진묶음:...]이 있어야 합니다."
             )
 
+def validate_closing_marker(blog_post: str) -> None:
+    """마무리 전용 구분선의 위치와 개수를 검사한다."""
+
+    _, body = _parse_title_and_body(blog_post)
+    matches = list(CLOSING_MARKER_RE.finditer(body))
+
+    if len(matches) != 1:
+        raise ValueError(
+            "[마무리] 마커는 마지막 소감 앞에 정확히 한 번 있어야 합니다. "
+            f"현재 {len(matches)}개입니다."
+        )
+
+    closing_marker = matches[0]
+    last_photo = None
+
+    # 글에서 가장 마지막 사진 마커를 찾는다
+    for photo_match in PHOTO_MARKER_FULL_RE.finditer(body):
+        last_photo = photo_match
+
+    # [마무리] 뒤에 사진이 있는지 검사한다
+    if (
+        last_photo is not None
+        and closing_marker.start() < last_photo.end()
+    ):
+        raise ValueError(
+            "[마무리] 뒤에는 사진을 배치할 수 없습니다."
+        )
+
+    closing_section = body[closing_marker.end():]
+    map_index = closing_section.find("[지도]")
+
+    if map_index < 0:
+        raise ValueError(
+            "[마무리] 뒤에 [지도] 마커가 없습니다."
+        )
+
+    # [마무리]부터 [지도] 사이의 내용
+    closing_text = closing_section[:map_index].strip()
+
+    if not closing_text:
+        raise ValueError(
+            "[마무리]와 [지도] 사이에 최종 소감이 없습니다."
+        )
+
+    # 마무리 문단 안에는 스티커를 넣지 않는다
+    if re.search(
+        r"^\s*\[스티커(?::[^\]]*)?\]\s*$",
+        closing_text,
+        re.MULTILINE,
+    ):
+        raise ValueError(
+            "[마무리] 뒤에는 스티커를 넣을 수 없습니다."
+        )
 
 def validate_blog_post(
     blog_post: str,
@@ -1097,6 +1163,7 @@ def validate_blog_post(
         blog_post=blog_post,
         required_keywords=required_keywords,
     )
+    validate_closing_marker(blog_post)
     validate_heading_dividers(blog_post)
 
 

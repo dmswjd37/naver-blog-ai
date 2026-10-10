@@ -55,6 +55,10 @@ SUPPORTED_IMAGE_SUFFIXES: Final[set[str]] = {
     ".bmp",
 }
 
+# 소제목에는 quotation_underline 인용구를 사용하고,
+# 마무리에는 이와 다른 가로선 스타일을 사용한다.
+CLOSING_HORIZONTAL_LINE_STYLE: Final[str] = "line5"
+
 FILE_INPUT_SELECTORS = [
     "input[type='file'][accept*='image']",
     "input[type='file'][accept*='.jpg']",
@@ -1104,15 +1108,14 @@ def write_naver_content(
         line = raw_line.strip()
 
         if line == "[마무리]":
-            next_index = index + 1
-
             _click_horizontal_line_style(
                 editor_frame=editor_frame,
-                data_value="line5",
+                data_value=CLOSING_HORIZONTAL_LINE_STYLE,
             )
             page.keyboard.press("Enter")
+            page.wait_for_timeout(300)
 
-            index = next_index + 1
+            index += 1
             continue
 
         if line == "[정보박스]":
